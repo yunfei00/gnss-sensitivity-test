@@ -50,7 +50,7 @@ adb -s SERIAL install -r .\android\app\build\outputs\apk\debug\app-debug.apk
 
 APP 支持 Android API 26 及以上。关箱前打开 APP，点击「授权并启动 USB 采集」，授权精确定位并开启系统定位。Android 13 及以上可允许通知，以便查看前台采集通知。用 Root 检测按钮记录 `su -c id` 结果。启动模式准备由操作者执行目标机型上已有证据的步骤，每轮填写经过验证的模式、命令、退出码、前后状态及本地证据引用。
 
-上位机通过 ADB 给 Android 的 `127.0.0.1:18765` 分配动态的本机端口。多台手机时填 USB 序列号；关箱前确认调试授权。Android 先写 SQLite，再通过 JSONL 响应 FETCH。Windows 提交 SQLite 后 ACK。手机连接失效会取消当前采集，已记录事件可在重连或恢复时补传。结束时 Windows 核验采集已停并要求确认 GNSS RF 关闭。若停机确认失败，运行保留为 PAUSED，界面和报告记明原因。
+上位机通过 ADB 给 Android 的 `127.0.0.1:18765` 分配动态的本机端口。多台手机时在下拉框选择 USB 序列号，并在关箱前确认调试授权。Android 先写 SQLite，再通过 JSONL 响应 FETCH。Windows 提交 SQLite 后 ACK。手机连接失效会取消当前采集，已记录事件在人工恢复时补传。结束时 Windows 核验采集已停并要求确认 GNSS RF 关闭。若停机确认失败，运行保留为 PAUSED，界面和报告记明原因。
 
 ## 现场模式
 
