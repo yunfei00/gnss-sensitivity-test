@@ -23,7 +23,7 @@ uv run --locked python -m desktop --mock --output results/replay --fault disconn
 
 ## Android 构建与连接
 
-准备 JDK 17、Gradle 8.9、Android SDK Platform 35、Build Tools 35.0.0 和 Platform Tools。设置 `ANDROID_HOME` 或 Android Studio 本地 SDK 路径。
+准备 JDK 17、Gradle 8.9、Android SDK Platform 35、Build Tools 34.0.0 和 Platform Tools。设置 `ANDROID_HOME` 或 Android Studio 本地 SDK 路径。
 
 ```powershell
 cd android

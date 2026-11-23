@@ -4,6 +4,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.InputStream
+import java.net.SocketTimeoutException
 
 class CommandRouterTest {
     private class MemoryJournal : Journal {
@@ -71,5 +73,19 @@ class CommandRouterTest {
         val start = envelope("START_ATTEMPT", "run", "trial", JSONObject())
         journal.claim(start.getString("message_id"), start.toString())
         assertEquals("ERROR", router.dispatch(start.toString()).getString("type"))
+    }
+
+    @Test fun idleConfirmationKeepsSocketButActiveOrPartialTimeoutFails() {
+        fun input(vararg values: Int) = object : InputStream() {
+            var index = 0
+            override fun read(): Int {
+                val value = values.getOrElse(index++) { -1 }
+                if (value == -2) throw SocketTimeoutException()
+                return value
+            }
+        }
+        assertEquals("{}", input(-2, 123, 125, 10).readFrame { true })
+        assertThrows(SocketTimeoutException::class.java) { input(-2).readFrame { false } }
+        assertThrows(SocketTimeoutException::class.java) { input(123, -2).readFrame { true } }
     }
 }

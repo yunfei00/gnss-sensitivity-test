@@ -3,6 +3,7 @@ package org.gnss.sensitivity
 import org.json.JSONObject
 import java.io.InputStream
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.time.Instant
 import java.util.UUID
 
@@ -41,10 +42,16 @@ fun validateCommand(command: JSONObject) {
     command.getJSONObject("payload")
 }
 
-fun InputStream.readFrame(): String? {
+fun InputStream.readFrame(keepWaitingOnIdle: () -> Boolean = { false }): String? {
     val buffer = java.io.ByteArrayOutputStream()
     while (buffer.size() < MAX_LINE) {
-        when (val byte = read()) {
+        val byte = try {
+            read()
+        } catch (error: SocketTimeoutException) {
+            if (buffer.size() == 0 && keepWaitingOnIdle()) continue
+            throw error
+        }
+        when (byte) {
             -1 -> return if (buffer.size() == 0) null else throw IOException("Incomplete frame")
             10 -> return Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(buffer.toByteArray())).toString()
             else -> buffer.write(byte)

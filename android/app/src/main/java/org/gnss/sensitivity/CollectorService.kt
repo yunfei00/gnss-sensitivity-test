@@ -45,7 +45,7 @@ class CollectorService : Service() {
     private var run: String? = null
     private var prepared: String? = null
     private val started = mutableSetOf<String>()
-    private var active: Attempt? = null
+    @Volatile private var active: Attempt? = null
     private var latest = JSONObject()
     private var localStop = false
     private var lastError: String? = null
@@ -112,7 +112,7 @@ class CollectorService : Service() {
                             val input = socket.getInputStream().buffered()
                             val output = socket.getOutputStream().buffered()
                             while (!closed) {
-                                val line = input.readFrame() ?: break
+                                val line = input.readFrame { active == null && !closed } ?: break
                                 val task = FutureTask {
                                     router.dispatch(line).also { refresh() }.toString()
                                 }
@@ -197,6 +197,7 @@ class CollectorService : Service() {
                         val attempt = Attempt(target, checkNotNull(id), lat, lon, window, tolerance)
                         started.add(id)
                         prepared = null
+                        latest = JSONObject()
                         active = attempt
                         try {
                             attempt.start()
