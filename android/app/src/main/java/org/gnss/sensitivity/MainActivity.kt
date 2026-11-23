@@ -71,14 +71,11 @@ class MainActivity : Activity() {
             content.setOnApplyWindowInsetsListener { view, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                val appearance = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                view.windowInsetsController?.setSystemBarsAppearance(appearance, appearance)
                 insets
             }
-            window.insetsController?.setSystemBarsAppearance(
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            )
         } else {
             window.statusBarColor = navy
             window.navigationBarColor = navy
@@ -204,44 +201,45 @@ class MainActivity : Activity() {
         if (running) requestingService = false
         val fine = hasFineLocation()
         val gps = getSystemService(LocationManager::class.java)?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
-        phase.text = when {
+        phase.show(when {
             requestingService -> "正在启动采集服务"
             running && !display.listening -> "USB 服务未就绪"
             else -> display.phase()
-        }
-        connection.text = when {
+        })
+        connection.show(when {
             !fine -> "请授予精确定位权限"
             !gps -> "请打开系统定位"
             display.connected -> "USB ADB 已连接 · TCP 18765"
             display.listening -> "等待 Windows 上位机连接 · TCP 18765"
             else -> "打开系统定位后启动 USB 采集"
-        }
+        })
         start.isEnabled = (!running || !fine) && !requestingService
         stop.isEnabled = running && (display.activeAttempt != null || display.preparedAttempt != null)
-        identifiers.text = "运行 ${display.activeRun ?: "—"}\n试验 ${display.activeAttempt ?: display.preparedAttempt ?: display.latestAttempt ?: "—"}"
-        ttff.text = format(display.ttff, 3, " s")
-        error.text = format(display.errorM, 2, " m")
-        used.text = display.usedInFix?.toString() ?: "—"
-        coordinates.text = "纬度 ${format(display.latitude, 6, "°")}   经度 ${format(display.longitude, 6, "°")}"
-        result.text = when {
+        val trial = display.activeAttempt ?: display.preparedAttempt ?: display.latestAttempt
+        identifiers.show("运行 ${display.activeRun ?: "—"}\n试验 ${trial ?: "—"}")
+        ttff.show(format(display.ttff, 3, " s"))
+        error.show(format(display.errorM, 2, " m"))
+        used.show(display.usedInFix?.toString() ?: "—")
+        coordinates.show("纬度 ${format(display.latitude, 6, "°")}   经度 ${format(display.longitude, 6, "°")}")
+        result.show(when {
             display.activeAttempt != null -> "正在等待本轮结果"
             display.result == "OBSERVED" -> "首次定位已采集 · 待上位机判定"
             display.reason == "TIMEOUT" -> "观察窗口内未定位"
             display.result == "INVALID" -> "本轮无效 · ${readableReason(display.reason)}"
             else -> "等待试验"
-        }
-        satellites.text = if (display.satellites.isEmpty()) "等待卫星遥测" else {
+        })
+        satellites.show(if (display.satellites.isEmpty()) "等待卫星遥测" else {
             val strongest = display.satellites.sortedByDescending { it.cn0 }.take(6)
             "${display.satellites.size} 个信号 · 最强 ${strongest.size} 个\n" +
                 strongest.joinToString("\n") {
                     "${constellation(it.constellation)} ${it.svid}    ${format(it.cn0, 1, " dB-Hz")}" +
                         if (it.used) "    参与解算" else ""
                 }
-        }
-        systemChecks.text = "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n" +
-            "精确定位  ${if (fine) "已授权" else "未授权"}\n系统定位  ${if (gps) "已开启" else "已关闭"}"
-        records.text = "已写入 ${display.recordCount} 条事件\n最近异常  ${readableReason(display.lastError)}"
-        rootStatus.text = if (probing) "正在检测 Root…" else CollectorService.rootEvidence
+        })
+        systemChecks.show("${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n" +
+            "精确定位  ${if (fine) "已授权" else "未授权"}\n系统定位  ${if (gps) "已开启" else "已关闭"}")
+        records.show("已写入 ${display.recordCount} 条事件\n最近异常  ${readableReason(display.lastError)}")
+        rootStatus.show(if (probing) "正在检测 Root…" else CollectorService.rootEvidence)
         probe.isEnabled = !probing
     }
 
@@ -296,6 +294,10 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    private fun TextView.show(value: String) {
+        if (text.toString() != value) text = value
+    }
 
     private fun text(value: String, size: Int, color: Int, bold: Boolean = false) = TextView(this).apply {
         text = value
