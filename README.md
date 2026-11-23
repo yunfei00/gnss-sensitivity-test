@@ -19,6 +19,7 @@ Windows —LAN→ GSS7000/SimREPLAYplus；Windows —LAN→ CMW500（如有远�
 - 观测超时建议初值 **30 s**（可配置），晚于 20.3 s 的 fix 仍判 TTFF FAIL。
 
 ## 文档导航
+- [P0–P5 安装、运行、报告和现场交接](docs/phase-one.md)
 - [需求与范围](docs/requirements.md)
 - [系统架构](docs/architecture.md)
 - [设备连接与安全](docs/hardware.md)
@@ -32,3 +33,14 @@ Windows —LAN→ GSS7000/SimREPLAYplus；Windows —LAN→ CMW500（如有远�
 
 ## 开发原则
 Mock 与真实仪器驱动分离；未经确认的 SimREPLAYplus/CMW500 命令不得伪造为已验证；默认模拟模式不能冒充真实硬件测试。公开仓库不得包含设备密码、真实客户数据、商业手册原文或内网信息。
+
+## 无仪器快速验证
+
+```powershell
+uv sync --locked
+uv run --locked pytest -q
+uv run --locked python -m desktop --mock
+uv run --locked python -m desktop
+```
+
+Mock 默认跑完 3 档并在 `results/mock` 写入 SQLite、CSV、JSON、HTML。真机流程通过 USB ADB 连手机，SimREPLAYplus 与 CMW500 状态通过现场操作和证据确认。

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "type",
+    "run_id",
+    "attempt_id",
+    "message_id",
+    "seq",
+    "utc_timestamp",
+    "payload"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": 1
+    },
+    "type": {
+      "enum": [
+        "HELLO",
+        "GET_STATUS",
+        "CONFIGURE_RUN",
+        "PREPARE_ATTEMPT",
+        "START_ATTEMPT",
+        "STOP_ATTEMPT",
+        "STOP_RUN",
+        "FETCH_EVENTS",
+        "ACK",
+        "PING",
+        "DEVICE_STATUS",
+        "SATELLITE_STATUS",
+        "LOCATION_UPDATE",
+        "FIRST_FIX",
+        "ATTEMPT_RESULT",
+        "ERROR",
+        "HEARTBEAT"
+      ]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "monotonic_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "PREPARE_ATTEMPT",
+              "START_ATTEMPT",
+              "STOP_ATTEMPT",
+              "SATELLITE_STATUS",
+              "LOCATION_UPDATE",
+              "FIRST_FIX",
+              "ATTEMPT_RESULT"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "attempt_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

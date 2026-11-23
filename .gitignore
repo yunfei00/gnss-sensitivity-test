@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+*.sqlite*
+results/
+android/.gradle/
+android/**/build/
+android/local.properties
+*.jks
+*.apk
+.local-tools/
