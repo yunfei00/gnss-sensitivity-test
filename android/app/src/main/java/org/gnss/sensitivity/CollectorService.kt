@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit
 
 class CollectorService : Service() {
     companion object {
-        @Volatile var diagnosticsText = "采集服务未启动"
+        @Volatile var uiSnapshot = CollectorDisplay()
             private set
         @Volatile var running = false
             private set
@@ -60,8 +60,11 @@ class CollectorService : Service() {
         val notifications = checkNotNull(getSystemService(NotificationManager::class.java))
         notifications.createNotificationChannel(NotificationChannel("gnss", "GNSS 测试", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val stop = PendingIntent.getService(this, 1, Intent(this, CollectorService::class.java).setAction("STOP"),
+            PendingIntent.FLAG_IMMUTABLE)
         startForeground(1, Notification.Builder(this, "gnss").setContentTitle(getString(R.string.app_name))
             .setContentText("USB GNSS 采集服务").setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, "停止当前试验", stop).build())
             .setSmallIcon(android.R.drawable.ic_menu_mylocation).build())
         location = checkNotNull(getSystemService(LocationManager::class.java))
         val preferences = getSharedPreferences("installation", MODE_PRIVATE)
@@ -96,7 +99,7 @@ class CollectorService : Service() {
         handler.post {
             stopActive("SERVICE_STOP")
             journal.close()
-            diagnosticsText = "采集服务已停止"
+            uiSnapshot = uiSnapshot.copy(listening = false, connected = false, activeAttempt = null, preparedAttempt = null)
         }
         worker.quitSafely()
         super.onDestroy()
@@ -108,10 +111,12 @@ class CollectorService : Service() {
             ServerSocket(18765, 1, InetAddress.getByName("127.0.0.1")).use { listening ->
                 server = listening
                 if (closed) return
+                handler.post { refresh() }
                 while (!closed) {
                     listening.accept().use { socket ->
                         client = socket
                         if (closed) return
+                        handler.post { refresh() }
                         socket.soTimeout = 5_000
                         runCatching {
                             val input = socket.getInputStream().buffered()
@@ -127,9 +132,12 @@ class CollectorService : Service() {
                                 output.flush()
                             }
                         }
-                        handler.post { stopActive("TRANSPORT_ERROR") }
                     }
                     client = null
+                    handler.post {
+                        stopActive("TRANSPORT_ERROR")
+                        refresh()
+                    }
                 }
             }
         } catch (error: Exception) {
@@ -154,8 +162,22 @@ class CollectorService : Service() {
         .put("last_error", lastError ?: JSONObject.NULL)
 
     private fun refresh() {
-        diagnosticsText = listOf(status().toString(2), "当前准备轮次 ${prepared ?: "—"}",
-            latest.toString(2), "本地事件 ${journal.count()}").joinToString("\n")
+        fun number(key: String) = latest.optDouble(key).takeIf { it.isFinite() }
+        fun text(key: String) = latest.optString(key).takeIf { it.isNotBlank() && !latest.isNull(key) }
+        val raw = latest.optJSONArray("satellites")
+        val satellites = List(raw?.length() ?: 0) { index ->
+            val item = checkNotNull(raw).getJSONObject(index)
+            DisplaySatellite(item.getInt("constellation"), item.getInt("svid"),
+                item.getDouble("cn0_db_hz"), item.getBoolean("used_in_fix"))
+        }
+        uiSnapshot = CollectorDisplay(
+            listening = server?.isClosed == false && !closed, connected = client?.isClosed == false && !closed,
+            activeRun = run, activeAttempt = active?.id, preparedAttempt = prepared, latestAttempt = text("attempt_id"),
+            latitude = number("latitude"), longitude = number("longitude"), ttff = number("ttff_s"),
+            errorM = number("horizontal_error_m"), usedInFix = number("used_in_fix")?.toInt(),
+            satellites = satellites, result = text("status"), reason = text("reason"),
+            lastError = lastError, recordCount = journal.count()
+        )
     }
 
     private fun control(command: JSONObject): JSONObject {
@@ -167,7 +189,10 @@ class CollectorService : Service() {
             "HELLO", "GET_STATUS", "PING" -> return status()
             "CONFIGURE_RUN" -> {
                 check(ready() && active == null) { "GPS disabled, precise location denied, or attempt active" }
-                if (run != target) started.clear()
+                if (run != target) {
+                    started.clear()
+                    latest = JSONObject()
+                }
                 run = target
                 prepared = null
                 localStop = false
@@ -188,6 +213,7 @@ class CollectorService : Service() {
                             "No verified preparation for $mode"
                         }
                         prepared = id
+                        latest = JSONObject()
                     }
                     "START_ATTEMPT" -> {
                         check(ready() && !localStop && active == null && id == prepared && id !in started)
@@ -355,9 +381,13 @@ class CollectorService : Service() {
         private fun publish(type: String, payload: JSONObject, time: Long = SystemClock.elapsedRealtimeNanos()) {
             journal.append(envelope(type, runId, id, payload, monotonicNs = time))
             if (type != "LOCATION_UPDATE" || !payload.optBoolean("mock_location")) {
-                latest = JSONObject(latest.toString()).apply {
-                    put("attempt_id", id)
-                    payload.keys().forEach { key -> put(key, payload.get(key)) }
+                val firstLocked = latest.has("first_fix_elapsed_realtime_ns")
+                latest.put("attempt_id", id)
+                if (type == "ATTEMPT_RESULT" && !payload.has("used_in_fix")) latest.remove("used_in_fix")
+                payload.keys().forEach { key ->
+                    if (!firstLocked || type != "LOCATION_UPDATE" || key !in setOf("latitude", "longitude")) {
+                        latest.put(key, payload.get(key))
+                    }
                 }
             }
             refresh()

@@ -1,6 +1,6 @@
 """SQLite run ledger. Events are committed before the phone is acknowledged."""
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
@@ -68,7 +68,7 @@ class Store:
     def claim(self):
         # The ledger is owned by a run folder. A second process must not drive the same run.
         path = self.path.with_suffix(".lock.sqlite")
-        with sqlite3.connect(path, timeout=0) as lock:
+        with closing(sqlite3.connect(path, timeout=0)) as lock, lock:
             lock.execute("BEGIN EXCLUSIVE")
             yield
 

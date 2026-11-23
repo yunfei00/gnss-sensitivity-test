@@ -1,5 +1,4 @@
 import os
-import json
 from dataclasses import asdict
 from queue import Empty, Queue
 from threading import get_ident
@@ -13,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 from desktop.adb import AdbDevice, AdbSnapshot
 from desktop.app import MainWindow
 from desktop.core import RunConfig
+from desktop.widgets import EvidenceDialog
 
 
 def wait_for(app, predicate, timeout=15):
@@ -63,19 +63,21 @@ def test_window_start_stop_resume_history(app, console):
     try:
         window.faults.setText("hold_attempt")
         window.start.click()
-        wait_for(app, lambda: "ATTEMPT_RUNNING" in window.state.text())
+        wait_for(app, lambda: window.state.property("state") == "ATTEMPT_RUNNING")
         assert "CMW500 LTE" in window.devices.text()
         window.stop.click()
         wait_for(app, lambda: window.worker is None)
-        assert "STOPPED" in window.state.text()
-        assert window.history.count() == 1
-        window.history.setCurrentRow(0)
+        assert window.state.property("state") == "STOPPED"
+        assert window.history.rowCount() == 1
+        assert window.history_attempts.rowCount() == 1
         assert window.attempts.rowCount() == 1
         window.faults.clear()
         window.resume.click()
         wait_for(app, lambda: window.worker is None)
-        assert "FINISHED" in window.state.text()
-        assert "TTFF" in window.live.text()
+        assert window.state.property("state") == "FINISHED"
+        assert window.metric_labels["ttff_s"].text().endswith(" s")
+        assert window.progress.value() == 20
+        assert window.history_attempts.rowCount() == 61
         assert window.attempts.rowCount() == 61
         assert window.report.is_file()
     finally:
@@ -121,7 +123,7 @@ def test_real_run_pins_selected_serial_and_reconnection_requires_resume(app, con
     window.mode.setCurrentIndex(1)
     config = RunConfig(-120, 1, scenario_id="demo", scenario_hash="fixture",
                        calibration_ref="fixture", scenario_signals="GPS L1", mock=False)
-    window.configuration.setPlainText(json.dumps(asdict(config)))
+    window.configuration.set_values(asdict(config))
     target = AdbDevice("target", 1)
     other = AdbDevice("other", 2)
     third = AdbDevice("third", 3)
@@ -141,9 +143,9 @@ def test_real_run_pins_selected_serial_and_reconnection_requires_resume(app, con
 
     publish(AdbSnapshot((other,)))
     wait_for(app, lambda: window.worker is None)
-    assert "PAUSED" in window.state.text() and "USB 通信异常" in window.state.text()
+    assert window.state.property("state") == "PAUSED" and "USB 通信异常" in window.state.text()
     assert window.serial.isEnabled()
-    window.history.setCurrentRow(0)
+    window.history.setCurrentCell(0, 0)
     assert not window.resume.isEnabled()
 
     reconnected = AdbDevice("target", 4)
@@ -158,3 +160,40 @@ def test_real_run_pins_selected_serial_and_reconnection_requires_resume(app, con
     assert window.worker.usb.device == reconnected
     window.stop.click()
     wait_for(app, lambda: window.worker is None)
+
+
+def test_config_preserves_drafts_and_guides_invalid_input(console):
+    window, _ = console
+    power = window.configuration.fields["min_power_dbm"][0]
+    power.setText("-135")
+    window.mode.setCurrentIndex(1)
+    assert power.text() == ""
+    window.configuration.fields["scenario_id"][0].setText("现场场景")
+    window.mode.setCurrentIndex(0)
+    assert power.text() == "-135"
+    power.setText("20MHz")
+    window.start.click()
+    assert window.worker is None
+    assert window.tabs.currentWidget() is window.settings_page
+    assert "最低功率" in window.config_issue.text()
+    window.mode.setCurrentIndex(1)
+    assert window.configuration.fields["scenario_id"][0].text() == "现场场景"
+
+
+def test_evidence_form_requires_explicit_safety_and_valid_readback(app):
+    dialog = EvidenceDialog(None, "核对仪器", {"running": None, "power_dbm": None,
+                                              "rf_off": None, "evidence": ""}, safety=True)
+    dialog.submit()
+    assert dialog.values is None
+    assert "场景正在运行" in dialog.problem.text()
+    dialog.fields["running"].setCurrentIndex(1)
+    dialog.fields["power_dbm"].setText("NaN")
+    dialog.submit()
+    assert dialog.values is None
+    assert "有限" in dialog.problem.text()
+    dialog.fields["running"].setCurrentIndex(2)
+    dialog.fields["power_dbm"].clear()
+    dialog.fields["rf_off"].setCurrentIndex(1)
+    dialog.fields["evidence"].setPlainText("现场日志编号 125")
+    dialog.submit()
+    assert dialog.values == {"running": False, "power_dbm": None, "rf_off": True, "evidence": "现场日志编号 125"}

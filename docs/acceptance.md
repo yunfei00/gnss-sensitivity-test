@@ -19,10 +19,12 @@ HTML（可读）、CSV（逐次）、JSON（完整结构）三种必需格式；
 5. Windows PySide6 smoke test：启动、停止、设备状态、实时指标与历史结果。
 6. ADB 发现与设备锁定：后台初次扫描和周期刷新，无设备禁用现场开始，单台自动选中，多台保留有效选择，过滤无线、unauthorized 和 offline，显示 ADB 超时。非当前设备插拔不干扰，当前设备掉线只将未完成轮次记为 INVALID，须手动恢复原手机。
 7. Android CI 执行 `testDebugUnitTest`、`lintDebug`、`assembleDebug` 并上传 `android-debug`。Artifact 含 `app-debug.apk`，Windows 一键脚本见 [一期使用说明](phase-one.md)。
+8. 界面回归覆盖模式草稿、配置错误定位、现场证据校验、运行进度与历史明细。HTML 报告验证运行摘要、档位、证据和审计文件入口。
 
 ## 现场验收
 - USB 穿墙口关箱后稳定连接，ADB/Root/APP 正常。
 - 用 `adb -s SERIAL install -r` 安装调试 APK，实际验证精确定位授权、Android 前台采集服务和 USB TCP 18765 双向通信。
+- 按 Home 后观察 Android 卫星遥测，回到采集监控和设备诊断复核状态。验证前台通知可停止当前试验。
 - 用两台真机检查型号显示、USB 调试授权、其他手机插拔、当前手机断开后的安全停止，以及原手机重连后手动恢复。
 - CMW500 LTE 小区连接真实成功，有可追溯证据。
 - GSS7000 SimREPLAYplus 场景/参考位置/功率变化得到实机验证。

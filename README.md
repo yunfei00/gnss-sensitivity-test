@@ -45,6 +45,8 @@ uv run --locked python -m desktop
 
 Mock 默认跑完 3 档并在 `results/mock` 写入 SQLite、CSV、JSON、HTML。真机流程通过 USB ADB 连手机，SimREPLAYplus 与 CMW500 状态通过现场操作和证据确认。
 
+Windows 操作台包括运行监控、测试配置、历史与报告三个页面。运行时查看功率、TTFF、误差、解算卫星和档位进度。现场操作在表单中填写仪器读值与证据。Android APP 提供采集监控和设备诊断，基础采集使用系统定位权限。
+
 ## USB 设备与 Android 调试 APK
 
 现场模式从「ADB USB 设备」下拉框选择已授权、在线的 USB 手机。程序启动时扫描，后台每 10 秒刷新一次，并监听插拔事件。开始后锁定设备。当前手机掉线时，中断轮次记为 INVALID，重连后选择原手机和历史运行再点击「恢复选中运行」。

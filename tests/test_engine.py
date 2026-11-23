@@ -36,7 +36,9 @@ def test_mock_report_and_power_sweep(ledger):
     assert result["threshold_dbm"] == -121
     assert result["reason"] == "LEVEL_FAILED"
     html = export(ledger, result["id"])
-    assert "MOCK" in html.read_text(encoding="utf-8")
+    report_html = html.read_text(encoding="utf-8")
+    for detail in ("MOCK", "最后通过档", "运行摘要", "完整配置与设备证据", "report.csv", "report.json", "run.sqlite"):
+        assert detail in report_html
     data = json.loads(html.with_suffix(".json").read_text(encoding="utf-8"))
     assert data["run"]["evidence"]["lte"]["registered"] is True
     assert data["events"] and data["device_logs"]

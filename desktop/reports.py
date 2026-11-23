@@ -5,6 +5,7 @@ from html import escape
 from tempfile import NamedTemporaryFile
 
 from .core import ERROR_M, PASS_COUNT, SATELLITES, SAMPLES, START_DBM, TTFF_S
+from .presentation import quantity, reason_text, state_text
 
 COLUMNS = (
     ("power_dbm", "设定功率 (dBm)"), ("readback_dbm", "档位读回 (dBm)"), ("ordinal", "轮次"),
@@ -57,35 +58,75 @@ def _html(report):
     columns = "".join(f"<th>{escape(label)}</th>" for _, label in COLUMNS)
     rows = []
     for row in _rows(report):
-        cells = (escape(str(row.get(key) if row.get(key) is not None else "")) for key, _ in COLUMNS)
+        values = {**row, "reason": reason_text(row.get("reason"))}
+        cells = (escape(str(values[key]) if values.get(key) is not None else "—") for key, _ in COLUMNS)
         rows.append("<tr><td>" + "</td><td>".join(cells) + "</td></tr>")
     levels = "".join(
         f"<tr><td>{level['power_dbm']}</td><td>{escape(str(level['readback_dbm']))}</td>"
         f"<td>{level['pass_count']}/{level['valid_count']}</td><td>{level['invalid_count']}</td>"
-        f"<td>{escape(level['status'])}</td></tr>" for level in report["levels"]
+        f"<td><span class=\"verdict {escape(level['status'])}\">{escape(state_text(level['status']))}</span></td></tr>"
+        for level in report["levels"]
     )
-    threshold = "—" if run["threshold_dbm"] is None else f"{run['threshold_dbm']} dBm"
-    reason = "未在起始档通过" if run["reason"] == "NOT_PASSED_AT_START" else str(run["reason"])
+    threshold = quantity(run["threshold_dbm"], "dBm")
+    total = sum(level["valid_count"] for level in report["levels"])
+    reason = reason_text(run["reason"])
     details = json.dumps({"config": run["config"], "evidence": run["evidence"]},
                          indent=2, ensure_ascii=False)
+    config = run["config"]
+    evidence = run["evidence"]
+    fields = (
+        ("场景", config["scenario_id"]), ("启动模式", config["startup_mode"]),
+        ("校准引用", config["calibration_ref"]), ("功率定义", config["power_definition"]),
+        ("手机", evidence.get("phone", {}).get("model")),
+        ("LTE 小区", evidence.get("lte", {}).get("cell")),
+    )
+    overview = "".join(f"<div><dt>{name}</dt><dd>{escape(str(value or '—'))}</dd></div>" for name, value in fields)
     return f"""<!doctype html>
-<html lang="zh-CN"><meta charset="UTF-8"><title>GNSS 灵敏度测试报告</title>
+<html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNSS 灵敏度测试报告</title>
 <style>
-body{{font:15px/1.5 system-ui,sans-serif;margin:2rem;color:#182235}}
-table{{border-collapse:collapse}}td,th{{border:1px solid #c6cfdb;padding:.4rem;text-align:left}}
-th{{background:#e9eff6}}pre{{white-space:pre-wrap}}section{{overflow:auto}}
+:root{{color-scheme:light}}*{{box-sizing:border-box}}body{{font:15px/1.6 "Microsoft YaHei UI",system-ui,sans-serif;
+margin:0;background:#eef2f7;color:#17283e}}header{{background:#142941;color:white;padding:30px 0}}
+.wrap{{width:min(1240px,calc(100% - 36px));margin:auto}}h1,h2,p,dl,dd{{margin:0}}
+h1{{font-size:clamp(24px,4vw,36px)}}h2{{font-size:18px;margin-bottom:.75rem}}header p{{color:#c7d7eb}}
+.badge{{display:inline-block;background:#29435f;border-radius:7px;padding:4px 10px;color:white;font-weight:bold;margin-top:10px}}
+.badge.mock{{background:#493821;color:#ffe1a8}}main{{padding:18px 0 36px}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin:12px 0}}
+.cards div,.panel{{background:white;border:1px solid #d6e0eb;border-radius:12px;padding:16px}}
+.cards dt,dt{{color:#50647b}}.cards dd{{font-size:24px;font-weight:bold}}.panel{{margin-top:12px}}
+.context{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 24px}}
+.context dd{{overflow-wrap:anywhere}}.files{{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}}
+a{{color:#1956a5}}a:focus-visible,summary:focus-visible{{outline:2px solid #1956a5}}
+.table-scroll{{overflow:auto}}table{{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}}
+td,th{{border-bottom:1px solid #d6e0eb;padding:8px 10px;text-align:left;white-space:nowrap}}
+th{{background:#e6eef7}}tbody tr:nth-child(even){{background:#f3f7fb}}
+.verdict{{display:inline-block;border-radius:5px;background:#e6eef7;padding:1px 7px}}
+.verdict.PASS{{background:#daefe6;color:#12634c}}.verdict.FAIL{{background:#f8e2dd;color:#9d3328}}
+pre{{white-space:pre-wrap;overflow-wrap:anywhere}}summary{{cursor:pointer}}
+@media print{{body,header,.panel,.cards div{{background:white;color:#17283e}}header p{{color:#50647b}}
+th,td{{white-space:normal;overflow-wrap:anywhere;padding:4px;font-size:9pt}}thead{{display:table-header-group}}
+tr{{break-inside:avoid}}}}
 </style>
-<h1>GNSS 灵敏度测试报告</h1>
-<p><strong>{escape(report['mode'])}</strong> · {escape(run['id'])} · {escape(run['started_utc'])}</p>
-<p>状态 {escape(run['status'])} · 原因 {escape(reason)} · 最后通过档 {threshold} · INVALID {report['invalid_count']}</p>
-<p>每档 20 次有效试验，至少 19 次 PASS。单次标准为 TTFF ≤ 20.3 s、水平误差 ≤ 101.3 m、参与解算卫星数 ≥ 4。</p>
-<p>原始事件与设备操作日志保存在 <a href="{escape(report['audit_path'], quote=True)}">{escape(report['audit_path'])}</a>。
-  完整记录见 <a href="report.json">JSON</a>，逐次数据见 <a href="report.csv">CSV</a>。</p>
-<h2>功率档位</h2><table><thead><tr><th>设定 (dBm)</th><th>读回 (dBm)</th><th>成功 / 有效</th>
-<th>INVALID</th><th>状态</th></tr></thead><tbody>{levels}</tbody></table>
-<h2>试验明细</h2><section><table><thead><tr>{columns}</tr></thead><tbody>{''.join(rows)}</tbody></table></section>
-<h2>配置与设备证据</h2><pre>{escape(details)}</pre>
-<h2>验证限制</h2><ul>{''.join(f'<li>{escape(item)}</li>' for item in report['limitations'])}</ul>
+<header><div class="wrap"><h1>GNSS 灵敏度测试报告</h1>
+<p>{escape(run['id'])} · {escape(run['started_utc'])}</p>
+<span class="badge {'mock' if config['mock'] else ''}">{escape(report['mode'])}</span></div></header>
+<main class="wrap">
+<dl class="cards"><div><dt>运行状态</dt><dd>{escape(state_text(run['status']))}</dd></div>
+<div><dt>最后通过档</dt><dd>{escape(threshold)}</dd></div><div><dt>有效试验</dt><dd>{total}</dd></div>
+<div><dt>INVALID</dt><dd>{report['invalid_count']}</dd></div></dl>
+<section class="panel"><h2>运行摘要</h2><p>{escape(reason)}</p><dl class="context">{overview}</dl>
+<div class="files"><a href="report.csv">逐次数据 CSV</a><a href="report.json">完整记录 JSON</a>
+<a href="{escape(report['audit_path'], quote=True)}">审计数据库 SQLite</a></div></section>
+<section class="panel"><h2>功率档位</h2>
+<p>每档 {SAMPLES} 次有效试验，至少 {PASS_COUNT} 次 PASS。单次标准为 TTFF ≤ {TTFF_S} s、水平误差 ≤ {ERROR_M} m、参与解算卫星数 ≥ {SATELLITES}。</p>
+<div class="table-scroll"><table><thead><tr><th scope="col">设定 (dBm)</th><th scope="col">读回 (dBm)</th>
+<th scope="col">成功 / 有效</th><th scope="col">INVALID</th><th scope="col">状态</th></tr></thead>
+<tbody>{levels}</tbody></table></div></section>
+<section class="panel"><h2>试验明细</h2><div class="table-scroll" tabindex="0" aria-label="试验明细">
+<table><thead><tr>{columns}</tr></thead><tbody>{''.join(rows)}</tbody></table></div></section>
+<section class="panel"><details><summary>查看完整配置与设备证据</summary><pre>{escape(details)}</pre></details></section>
+<section class="panel"><h2>验证限制</h2><ul>{''.join(f'<li>{escape(item)}</li>' for item in report['limitations'])}</ul></section>
+</main>
 </html>"""
 
 

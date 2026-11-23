@@ -254,7 +254,9 @@ class TestEngine:
                     result = self._attempt(attempt, power)
                     self._check_stop()
                 except UserStop as exc:
-                    self.db.decision(attempt, {"status": "INVALID", "reason": str(exc)})
+                    stopped = {"status": "INVALID", "reason": str(exc)}
+                    self.db.decision(attempt, stopped)
+                    self.notify("ATTEMPT", {"attempt_id": attempt, "power_dbm": power, **stopped})
                     raise
                 except DeviceError as exc:
                     last_error = exc
