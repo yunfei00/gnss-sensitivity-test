@@ -18,7 +18,7 @@ class MainActivity : Activity() {
     private lateinit var details: TextView
     private val update = object : Runnable {
         override fun run() {
-            details.text = "${CollectorService.rootEvidence}\n${CollectorService.display}"
+            details.text = "${CollectorService.rootEvidence}\n${CollectorService.diagnosticsText}"
             ui.postDelayed(this, 500)
         }
     }

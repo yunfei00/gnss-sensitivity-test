@@ -14,6 +14,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
@@ -30,7 +31,7 @@ import java.util.concurrent.TimeUnit
 
 class CollectorService : Service() {
     companion object {
-        @Volatile var display = "采集服务未启动"
+        @Volatile var diagnosticsText = "采集服务未启动"
             private set
         @Volatile var rootEvidence = "尚未检测 Root"
     }
@@ -91,7 +92,7 @@ class CollectorService : Service() {
         handler.post {
             stopActive("SERVICE_STOP")
             journal.close()
-            display = "采集服务已停止"
+            diagnosticsText = "采集服务已停止"
         }
         worker.quitSafely()
         super.onDestroy()
@@ -149,7 +150,7 @@ class CollectorService : Service() {
         .put("last_error", lastError ?: JSONObject.NULL)
 
     private fun refresh() {
-        display = listOf(status().toString(2), "当前准备轮次 ${prepared ?: "—"}",
+        diagnosticsText = listOf(status().toString(2), "当前准备轮次 ${prepared ?: "—"}",
             latest.toString(2), "本地事件 ${journal.count()}").joinToString("\n")
     }
 
@@ -303,6 +304,11 @@ class CollectorService : Service() {
         }
 
         override fun onProviderDisabled(provider: String) = guard { complete("INVALID", "GPS_DISABLED") }
+
+        override fun onProviderEnabled(provider: String) = Unit
+
+        @Suppress("DEPRECATION")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
 
         private fun metrics(fix: Fix) = JSONObject().put("source", "GPS_PROVIDER")
             .put("latitude", fix.latitude).put("longitude", fix.longitude)

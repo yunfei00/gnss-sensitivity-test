@@ -5,6 +5,7 @@ __pycache__/
 *.sqlite*
 results/
 android/.gradle/
+android/.kotlin/
 android/**/build/
 android/local.properties
 *.jks

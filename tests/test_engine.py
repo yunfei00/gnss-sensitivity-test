@@ -92,6 +92,29 @@ def test_retry_budget(ledger):
     assert report["levels"][0]["valid_count"] == 0
 
 
+def test_lte_drop_during_observation_invalidates_phone_timeout(ledger, monkeypatch):
+    config = RunConfig(-120, 1)
+    faults = Faults(["timeout"])
+    simulator, lte, phone = mock_devices(config, faults)
+    verify = lte.verify_lte_environment
+    checks = 0
+
+    def verify_lte():
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            faults.remaining["lte_unregistered"] = 1
+        return verify()
+
+    monkeypatch.setattr(lte, "verify_lte_environment", verify_lte)
+    run_id = ledger.create_run(config)
+    result = TestEngine(ledger, run_id, simulator, lte, phone).execute()
+    level = snapshot(ledger, run_id)["levels"][0]
+    assert result["status"] == "FINISHED"
+    assert level["attempts"][0]["status"] == "INVALID"
+    assert level["pass_count"] == 20
+
+
 def test_safe_stop_failure_prevents_finished(ledger):
     result, _ = run(ledger, ["gss_stop"], RunConfig(-120, 1))
     assert result["status"] == "PAUSED"
