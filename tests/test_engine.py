@@ -4,6 +4,7 @@ from threading import Event
 
 import pytest
 
+from desktop.adb import AdbDevice, AdbSnapshot, UsbRun
 from desktop.core import RunConfig
 from desktop.engine import TestEngine
 from desktop.mock import Faults, mock_devices
@@ -113,6 +114,62 @@ def test_lte_drop_during_observation_invalidates_phone_timeout(ledger, monkeypat
     assert result["status"] == "FINISHED"
     assert level["attempts"][0]["status"] == "INVALID"
     assert level["pass_count"] == 20
+
+
+def test_field_usb_loss_preserves_completed_attempts_and_requires_new_execution(ledger, monkeypatch):
+    config = RunConfig(-120, 1, scenario_id="fixture", scenario_hash="fixture",
+                       calibration_ref="fixture", scenario_signals="GPS L1", mock=False)
+    simulator, lte, phone = mock_devices(config)
+    simulator.mock = lte.mock = phone.mock = False
+    monkeypatch.setattr(simulator, "identify", lambda: {
+        "model": "GSS7000", "software": "SimREPLAYplus", "version": "fixture",
+        "min_power_dbm": -140, "max_power_dbm": -110,
+    })
+    get_state = simulator.get_state
+    monkeypatch.setattr(simulator, "get_state", lambda: get_state() | {"rf_off": not simulator.running})
+    status = phone.status
+    monkeypatch.setattr(phone, "status", lambda: status() | {"device_id": "fixture-installation"})
+    observation = phone._result
+
+    def field_result(*args):
+        observation(*args)
+        phone.events[-1]["payload"]["satellite_association"] = "BRACKETED_STABLE_CALLBACKS"
+
+    monkeypatch.setattr(phone, "_result", field_result)
+    serial = AdbDevice("fixture", 1)
+    usb = UsbRun(serial)
+    run_id = ledger.create_run(config)
+    exchange = phone.send_command
+
+    def disconnect_after_second_start(command):
+        usb.check()
+        is_second = command["type"] == "START_ATTEMPT" and len(phone.started) == 1
+        if is_second:
+            phone.faults.remaining["hold_attempt"] = 1
+        exchange(command)
+        if is_second:
+            usb.observe(AdbSnapshot((AdbDevice("another", 2),)))
+
+    monkeypatch.setattr(phone, "check_connection", usb.check)
+    monkeypatch.setattr(phone, "send_command", disconnect_after_second_start)
+    prepare = lambda *_: "fixture preparation"
+    result = TestEngine(ledger, run_id, simulator, lte, phone, prepare=prepare).execute()
+    level = snapshot(ledger, run_id)["levels"][0]
+    assert result["status"] == "PAUSED" and "USB 通信异常" in result["reason"]
+    assert [row["status"] for row in level["attempts"]] == ["PASS", "INVALID"]
+    assert len(phone.started) == 2 and simulator.running is False
+    assert not any(row["operation"] == "reconnect" for row in ledger.logs(run_id))
+
+    reconnected = AdbDevice("fixture", 3)
+    usb.observe(AdbSnapshot((reconnected,)))
+    assert ledger.run(run_id)["status"] == "PAUSED" and len(phone.started) == 2
+    monkeypatch.setattr(phone, "check_connection", UsbRun(reconnected).check)
+    monkeypatch.setattr(phone, "send_command", exchange)
+    result = TestEngine(ledger, run_id, simulator, lte, phone, prepare=prepare).execute(resume=True)
+    assert result["status"] == "FINISHED"
+    restored = snapshot(ledger, run_id)["levels"][0]
+    assert restored["pass_count"] == 20 and restored["invalid_count"] == 1
+    assert restored["attempts"][:2] == level["attempts"]
 
 
 def test_safe_stop_failure_prevents_finished(ledger):

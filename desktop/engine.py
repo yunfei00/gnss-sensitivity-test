@@ -39,8 +39,15 @@ class TestEngine:
         self.notify("STATE", {"state": state, "reason": reason})
 
     def _check_stop(self):
+        self.transport.check_connection()
         if self.stop.is_set():
             raise UserStop("USER_STOP")
+
+    def _settle(self):
+        end = monotonic() + self.config.settle_s
+        while (remaining := end - monotonic()) > 0:
+            self.stop.wait(min(remaining, 0.2))
+            self._check_stop()
 
     def _device(self, adapter, operation, *args):
         name = "GSS7000" if adapter is self.sim else "CMW500"
@@ -105,9 +112,9 @@ class TestEngine:
         if not config.mock and not phone.get("device_id"):
             raise DeviceError("手机无法提供用于恢复核验的安装标识")
         active = phone.get("active_attempt")
-        opened = {attempt["id"] for level in self.db.levels(self.run)
-                  for attempt in self.db.attempts(level["id"]) if attempt["status"] == "OPEN"}
-        if active is not None and (phone.get("active_run") != self.run or active not in opened):
+        recoverable = {attempt["id"] for level in self.db.levels(self.run)
+                       for attempt in self.db.attempts(level["id"]) if attempt["status"] in ("OPEN", "INVALID")}
+        if active is not None and (phone.get("active_run") != self.run or active not in recoverable):
             raise DeviceError("手机正在运行无法归属本次记录的试验")
         self.phone_owned = phone.get("active_run") == self.run
         if self.phone_owned:
@@ -229,8 +236,7 @@ class TestEngine:
             self._state("LEVEL_SETUP")
             setpoint = self._device(self.sim, "set_power", power)
             verified_readback(setpoint.get("set_power_dbm"), power, self.config.power_tolerance_db)
-            if self.stop.wait(self.config.settle_s):
-                self._check_stop()
+            self._settle()
             reading = self._device(self.sim, "read_power")
             readback = verified_readback(reading.get("readback_dbm"), power, self.config.power_tolerance_db)
             self.db.readback(level["id"], readback)
@@ -255,6 +261,8 @@ class TestEngine:
                     result = {"status": "INVALID", "reason": str(exc)}
                 self.db.decision(attempt, result)
                 self.notify("ATTEMPT", {"attempt_id": attempt, "power_dbm": power, **result})
+                if isinstance(last_error, LinkError) and not self.config.mock:
+                    raise last_error
                 if result["status"] == "INVALID":
                     invalid += 1
                     self._check_stop()
@@ -286,6 +294,8 @@ class TestEngine:
                 try:
                     self.phone.command("STOP_RUN")
                 except LinkError:
+                    if not self.config.mock:
+                        raise
                     self._link("reconnect")
                     self.phone.command("STOP_RUN")
                 if self.phone.command("GET_STATUS").get("active_attempt") is not None:

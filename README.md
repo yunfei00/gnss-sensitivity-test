@@ -44,3 +44,9 @@ uv run --locked python -m desktop
 ```
 
 Mock 默认跑完 3 档并在 `results/mock` 写入 SQLite、CSV、JSON、HTML。真机流程通过 USB ADB 连手机，SimREPLAYplus 与 CMW500 状态通过现场操作和证据确认。
+
+## USB 设备与 Android 调试 APK
+
+现场模式从「ADB USB 设备」下拉框选择已授权、在线的 USB 手机。程序启动时扫描，后台每 10 秒刷新一次，并监听插拔事件。开始后锁定设备。当前手机掉线时，中断轮次记为 INVALID，重连后选择原手机和历史运行再点击「恢复选中运行」。
+
+在 Windows 仓库根目录运行 `.\android\build-debug.ps1`，或在 [GitHub Actions](https://github.com/yunfei00/gnss-sensitivity-test/actions/workflows/ci.yml?query=branch%3Acodex%2Fphase-1) 选择成功运行，从 **Artifacts → android-debug** 下载 `app-debug.apk`。这是调试签名安装包。构建环境、ADB 版本和安装步骤见 [一期使用说明](docs/phase-one.md)。

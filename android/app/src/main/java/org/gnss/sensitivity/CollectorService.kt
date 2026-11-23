@@ -33,6 +33,8 @@ class CollectorService : Service() {
     companion object {
         @Volatile var diagnosticsText = "采集服务未启动"
             private set
+        @Volatile var running = false
+            private set
         @Volatile var rootEvidence = "尚未检测 Root"
     }
 
@@ -69,6 +71,7 @@ class CollectorService : Service() {
         journal = SQLiteJournal(this)
         worker = HandlerThread("gnss-events").also { it.start() }
         handler = Handler(worker.looper)
+        running = true
         Thread(::serve, "gnss-loopback").start()
         handler.post { refresh() }
     }
@@ -86,6 +89,7 @@ class CollectorService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        running = false
         closed = true
         runCatching { server?.close() }
         runCatching { client?.close() }

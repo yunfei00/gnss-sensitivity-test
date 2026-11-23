@@ -4,18 +4,19 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from PySide6.QtCore import QThread, QUrl, Signal
+from PySide6.QtCore import QSignalBlocker, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
-                               QMessageBox, QPlainTextEdit, QPushButton, QTableWidget,
+                               QPlainTextEdit, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .core import DeviceError, RunConfig, UserStop
+from .adb import AdbSnapshot, UsbRun, monitor_devices
+from .core import DeviceError, LinkError, RunConfig, UserStop
 from .engine import TestEngine
 from .instruments import Cmw500Manual, SimReplayPlusManual
 from .mock import Faults, mock_devices
@@ -24,28 +25,70 @@ from .storage import Store
 from .transports import AdbTransport
 
 
+class AdbMonitor(QThread):
+    changed = Signal(object)
+
+    def __init__(self, adb):
+        super().__init__()
+        self.adb = adb
+        self.stop = Event()
+        self.lock = Lock()
+        self.snapshot = AdbSnapshot()
+        self.usb = None
+
+    def publish(self, snapshot):
+        with self.lock:
+            self.snapshot = snapshot
+            if self.usb is not None:
+                self.usb.observe(snapshot)
+        self.changed.emit(snapshot)
+
+    def claim(self, device):
+        with self.lock:
+            usb = UsbRun(device)
+            usb.observe(self.snapshot)
+            usb.check()
+            self.usb = usb
+            return usb
+
+    def release(self):
+        with self.lock:
+            self.usb = None
+            return self.snapshot
+
+    def run(self):
+        monitor_devices(self.publish, self.stop, self.adb)
+
+
 class RunWorker(QThread):
     update = Signal(str, dict)
     request_confirmation = Signal(object)
     finished_run = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, path, stop, config=None, run=None, serial="", faults=()):
+    def __init__(self, path, stop, config=None, run=None, usb=None, faults=(), adb="adb"):
         super().__init__()
         self.path, self.stop = path, stop
-        self.config, self.run_id, self.serial, self.faults = config, run, serial, faults
+        self.config, self.run_id, self.usb, self.faults = config, run, usb, faults
+        self.adb = adb
+
+    def check_running(self):
+        if self.usb is not None:
+            self.usb.check()
+        if self.stop.is_set():
+            raise UserStop("USER_STOP")
 
     def confirmation(self, prompt, template, safety=False):
-        if self.stop.is_set() and not safety:
-            raise UserStop("USER_STOP")
+        if not safety:
+            self.check_running()
         done = Event()
         output = {}
         self.request_confirmation.emit((prompt, template, safety, done, output))
         while not done.wait(0.1):
-            if self.stop.is_set() and not safety:
-                raise UserStop("USER_STOP")
-        if self.stop.is_set() and not safety:
-            raise UserStop("USER_STOP")
+            if not safety:
+                self.check_running()
+        if not safety:
+            self.check_running()
         value = output.get("value")
         if not isinstance(value, dict) or not isinstance(value.get("evidence"), str) or not value["evidence"].strip():
             raise DeviceError("操作取消或缺少现场证据")
@@ -70,10 +113,24 @@ class RunWorker(QThread):
                 if config.mock:
                     devices = mock_devices(config, Faults(self.faults))
                 else:
+                    if self.usb is None:
+                        raise LinkError("须选择唯一的 USB 设备")
+                    serial = self.usb.device.serial
+                    recorded = store.run(self.run_id)["evidence"].get("usb_serial")
+                    if recorded and recorded != serial:
+                        raise LinkError(f"恢复须选择原 USB 设备 {recorded}")
+                    if not resume:
+                        store.evidence(self.run_id, usb_serial=serial)
                     devices = (SimReplayPlusManual(self.confirmation),
-                               Cmw500Manual(self.confirmation), AdbTransport(self.serial))
+                               Cmw500Manual(self.confirmation), AdbTransport(self.usb, self.adb))
+
+                def notify(kind, payload):
+                    if self.usb is not None and kind == "PHONE":
+                        store.evidence(self.run_id, usb_serial=self.usb.device.serial)
+                    self.update.emit(kind, payload)
+
                 controller = TestEngine(store, self.run_id, *devices, stop=self.stop,
-                                        notify=self.update.emit, prepare=self.preparation)
+                                        notify=notify, prepare=self.preparation)
                 try:
                     result = controller.execute(resume=resume)
                 finally:
@@ -88,6 +145,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.root = Path(root)
         self.worker = None
+        self.adb = os.environ.get("GNSS_ADB", "").strip() or "adb"
+        self.adb_monitor = AdbMonitor(self.adb)
+        self.adb_monitor.changed.connect(self.update_usb)
+        self.adb_monitor.finished.connect(self.close)
         self.stop_signal = Event()
         self.confirmation_dialog = None
         self.report = None
@@ -104,13 +165,18 @@ class MainWindow(QMainWindow):
         self.mode.currentIndexChanged.connect(self.change_mode)
         self.configuration = QPlainTextEdit()
         self.configuration.setMaximumHeight(160)
-        self.serial = QLineEdit(os.environ.get("GNSS_ADB_SERIAL", ""))
+        self.serial = QComboBox()
+        self.serial.setPlaceholderText("正在扫描 USB 设备…")
+        self.serial.currentIndexChanged.connect(lambda: self.set_busy(self.worker is not None))
+        self.usb_status = QLabel("正在扫描 USB 设备…")
+        self.usb_status.setWordWrap(True)
         self.faults = QLineEdit()
         self.faults.setPlaceholderText("逗号分隔，例如 disconnect,no_satellite")
         form = QFormLayout()
         form.addRow("模式", self.mode)
         form.addRow("运行配置 (JSON)", self.configuration)
-        form.addRow("ADB USB 序列号", self.serial)
+        form.addRow("ADB USB 设备", self.serial)
+        form.addRow("", self.usb_status)
         form.addRow("Mock 故障注入", self.faults)
         layout.addLayout(form)
         self.banner = QLabel()
@@ -143,6 +209,7 @@ class MainWindow(QMainWindow):
         self.change_mode()
         self.reload_history()
         self.set_busy(False)
+        self.adb_monitor.start()
 
     def change_mode(self, *_):
         mock = self.mode.currentIndex() == 0
@@ -154,18 +221,56 @@ class MainWindow(QMainWindow):
             for key in ("reference_lat", "reference_lon", "min_power_dbm", "max_levels"):
                 defaults[key] = None
         self.configuration.setPlainText(json.dumps(defaults, ensure_ascii=False, indent=2))
-        self.serial.setEnabled(not mock)
-        self.faults.setEnabled(mock)
         self.banner.setText("MOCK · 合成设备与定位" if mock else "现场 · CMW500 LTE 环境 · USB ADB 数据 · 人工仪器证据")
+        self.set_busy(self.worker is not None)
+
+    def update_usb(self, snapshot):
+        if self.worker is not None:
+            usb = self.worker.usb
+            if usb is not None and usb.lost.is_set():
+                self.usb_status.setText(f"{usb.reason} · 须人工恢复 · {snapshot.description}")
+                self.reject_run_dialog()
+            elif usb is not None:
+                self.usb_status.setText(f"本次锁定 {usb.device.serial} · {snapshot.description}")
+            else:
+                self.usb_status.setText(snapshot.description)
+            return
+
+        selected = self.serial.currentData()
+        devices = snapshot.selectable
+        with QSignalBlocker(self.serial):
+            self.serial.clear()
+            self.serial.setPlaceholderText("请选择 USB 设备" if devices else "未发现 USB 设备")
+            for device in devices:
+                self.serial.addItem(device.label, device)
+            index = next((i for i, device in enumerate(devices)
+                          if selected and device.serial == selected.serial), -1)
+            self.serial.setCurrentIndex(0 if len(devices) == 1 else index)
+        self.usb_status.setText(snapshot.description)
+        self.set_busy(False)
+
+    def resume_allowed(self, run):
+        if run["status"] == "FINISHED":
+            return False
+        if run["config"]["mock"]:
+            return True
+        selected = self.serial.currentData()
+        recorded = run["evidence"].get("usb_serial")
+        return selected is not None and (not recorded or selected.serial == recorded)
 
     def set_busy(self, busy):
-        for widget in (self.start, self.mode, self.configuration, self.serial, self.faults, self.history):
+        for widget in (self.mode, self.configuration, self.history):
             widget.setEnabled(not busy)
-        if not busy:
-            self.serial.setEnabled(self.mode.currentIndex() == 1)
-            self.faults.setEnabled(self.mode.currentIndex() == 0)
+        mock = self.mode.currentIndex() == 0
+        selection = self.selected()
+        real_history = selection is not None and not selection[1]["config"]["mock"]
+        self.serial.setEnabled(not busy and (not mock or real_history) and self.serial.count() > 0)
+        self.start.setEnabled(not busy and (mock or self.serial.currentData() is not None))
+        self.faults.setEnabled(not busy and mock)
         self.stop.setEnabled(busy and not self.stop_signal.is_set())
-        self.resume.setEnabled(not busy and self.selected() is not None and self.selected()[1]["status"] != "FINISHED")
+        self.resume.setEnabled(not busy and selection is not None and self.resume_allowed(selection[1]))
+        recorded = selection[1]["evidence"].get("usb_serial") if real_history else None
+        self.resume.setToolTip(f"选择原 USB 设备 {recorded} 后点击恢复" if recorded else "")
         self.open_report.setEnabled(not busy and self.report is not None)
 
     def selected(self):
@@ -210,17 +315,29 @@ class MainWindow(QMainWindow):
             config = RunConfig(**data)
             path = self.root / str(uuid4()) / "run.sqlite"
             self.begin(path, config=config)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, LinkError) as exc:
             self.state.setText(str(exc))
 
     def resume_run(self):
         selection = self.selected()
-        if selection is not None:
+        if selection is not None and self.resume_allowed(selection[1]):
             path, run = selection
-            self.begin(path, run=run["id"], mock=run["config"]["mock"])
+            try:
+                self.begin(path, run=run["id"], mock=run["config"]["mock"])
+            except LinkError as exc:
+                self.state.setText(str(exc))
 
     def begin(self, path, config=None, run=None, mock=None):
+        if self.worker is not None:
+            return
         actual_mock = config.mock if config else mock
+        usb = None
+        if not actual_mock:
+            device = self.serial.currentData()
+            if device is None:
+                raise LinkError("请选择一台已授权、在线的 USB 设备")
+            usb = self.adb_monitor.claim(device)
+            self.usb_status.setText(f"本次锁定 {device.serial}")
         self.banner.setText("MOCK · 合成设备与定位" if actual_mock else "现场 · USB ADB + CMW500 LTE")
         if run is None:
             self.attempts.setRowCount(0)
@@ -231,9 +348,9 @@ class MainWindow(QMainWindow):
         self.live.setText("等待遥测")
         self.devices.setText("等待设备预检")
         self.stop_signal.clear()
-        self.worker = RunWorker(path, self.stop_signal, config, run, self.serial.text().strip(),
+        self.worker = RunWorker(path, self.stop_signal, config, run, usb,
                                 [part.strip() for part in self.faults.text().split(",")
-                                 if actual_mock and part.strip()])
+                                 if actual_mock and part.strip()], adb=self.adb)
         self.worker.update.connect(self.update_run)
         self.worker.request_confirmation.connect(self.ask_confirmation)
         self.worker.finished_run.connect(self.complete)
@@ -244,7 +361,8 @@ class MainWindow(QMainWindow):
 
     def ask_confirmation(self, request):
         prompt, template, safety, done, output = request
-        if self.stop_signal.is_set() and not safety:
+        usb = self.worker.usb
+        if not safety and (self.stop_signal.is_set() or (usb is not None and usb.lost.is_set())):
             done.set()
             return
         dialog = QDialog(self)
@@ -289,6 +407,9 @@ class MainWindow(QMainWindow):
         self.stop_signal.set()
         self.stop.setEnabled(False)
         self.state.setText("STOPPING · 正在取消采集并确认 RF 安全")
+        self.reject_run_dialog()
+
+    def reject_run_dialog(self):
         if self.confirmation_dialog:
             dialog, safety = self.confirmation_dialog
             if not safety:
@@ -334,8 +455,9 @@ class MainWindow(QMainWindow):
     def worker_done(self):
         worker, self.worker = self.worker, None
         worker.deleteLater()
+        snapshot = self.adb_monitor.release()
         self.reload_history()
-        self.set_busy(False)
+        self.update_usb(snapshot)
 
     def show_report(self):
         if self.report is not None:
@@ -344,6 +466,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.worker is not None:
             self.stop_run()
+            event.ignore()
+        elif self.adb_monitor.isRunning():
+            self.adb_monitor.stop.set()
             event.ignore()
         else:
             event.accept()

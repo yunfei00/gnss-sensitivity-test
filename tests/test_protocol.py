@@ -1,10 +1,12 @@
 import json
 import socket
 from threading import Thread
+from subprocess import CompletedProcess
 
 import pytest
 
 from desktop.core import LinkError, RunConfig
+from desktop.adb import AdbDevice, UsbRun
 from desktop.mock import Faults, MockPhone
 from desktop.protocol import decode, dump, envelope
 from desktop.storage import Store
@@ -62,15 +64,12 @@ def test_adb_local_forward_and_bidirectional_jsonl(monkeypatch):
         listener.listen()
         listener.settimeout(5)
         port = listener.getsockname()[1]
-        transport = AdbTransport("fixture")
+        transport = AdbTransport(UsbRun(AdbDevice("fixture", 1)))
 
-        def adb(*args, serial=None):
-            calls.append((args, serial))
-            if args[0] == "devices":
-                return "List of devices attached\nfixture device usb:1 model:DUT"
-            if args[0] == "forward":
-                return str(port)
-            raise AssertionError(args)
+        def adb(args, **kwargs):
+            calls.append(args[5:])
+            assert kwargs["timeout"] == 5
+            return CompletedProcess(args, 0, stdout=str(port))
 
         def receive():
             with listener.accept()[0] as client, client.makefile("rb") as stream:
@@ -79,7 +78,7 @@ def test_adb_local_forward_and_bidirectional_jsonl(monkeypatch):
                 reply = envelope("DEVICE_STATUS", request["run_id"], payload={"ready": True})
                 client.sendall((dump(reply) + "\n").encode())
 
-        monkeypatch.setattr(transport, "_run_adb", adb)
+        monkeypatch.setattr("desktop.adb.subprocess.run", adb)
         server = Thread(target=receive)
         server.start()
         try:
@@ -90,5 +89,7 @@ def test_adb_local_forward_and_bidirectional_jsonl(monkeypatch):
             transport.disconnect()
             server.join(6)
         assert not server.is_alive()
-        assert (("forward", "tcp:0", "tcp:18765"), "fixture") in calls
-        assert (("forward", "--remove", f"tcp:{port}"), "fixture") in calls
+        assert calls == [
+            ["-s", "fixture", "forward", "tcp:0", "tcp:18765"],
+            ["-s", "fixture", "forward", "--remove", f"tcp:{port}"],
+        ]

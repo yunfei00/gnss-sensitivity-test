@@ -13,6 +13,13 @@ uv run --locked python -m desktop
 
 命令行 Mock 默认依次运行 -120、-121、-122 dBm，前两档各通过 20 次，第三档 0/20，最后通过档为 -121 dBm。每次 CLI 运行请指定独立输出目录。Windows 界面默认选择 Mock，修改配置里的最低功率、最大档数和观察窗口后可直接开始。界面实时显示设备状态、定位和逐次判定。选中历史运行后可以查看结果、打开报告或恢复未完成运行。
 
+### 选择 USB 手机
+
+- 安装支持 USB 连接类型跟踪的 Android SDK Platform Tools（例如 37.0.1），以 `adb` 在 PATH 中可用。若本机有多个 ADB 版本，可在 `.env` 用 `GNSS_ADB` 指定 SDK 的 `adb.exe`。上位机连接本机 ADB 服务 `127.0.0.1:5037`。如果该服务仍由旧版 ADB 提供且提示 `unknown host service`，请在其他 ADB 会话结束后用已更新的 Platform Tools 重启该服务。
+- 现场模式的下拉框显示序列号和可获取的型号。启动即后台扫描，每 10 秒重新获取完整列表，ADB 插拔和状态事件会提前刷新。单台自动选中，多台时保留有效选择或等待手动选择。无线 ADB、模拟器、offline 和 unauthorized 不可选。ADB 失败或超时会显示原因。
+- 开始后锁定选中的序列号和本次 USB 连接。设备命令都使用 `adb -s SERIAL`。列表扫描与服务启动属于 ADB 主机操作。其他设备插拔不影响当前测试。
+- 锁定手机掉线时暂停并确认 RF 安全停止，已完成结果保留，当前轮次记 INVALID。重连后选择原 USB 手机和历史运行，点击「恢复选中运行」。上位机核对原序列号及已有的手机安装标识，再补传日志并继续。
+
 故障注入使用可重复的 `--fault` 或界面的逗号分隔输入。例如：
 
 ```powershell
@@ -21,17 +28,25 @@ uv run --locked python -m desktop --mock --output results/replay --fault disconn
 
 故障包括 `gss_connect`、`gss_set_power`、`gss_readback`、`gss_stop`、`lte_unregistered`、`phone_connect`、`phone_prepare`、`phone_health`、`no_satellite`、`disconnect`、`drop_ack`、`hold_attempt`、`late_fix`、`position_error`、`few_satellites` 和 `timeout`。同一故障可以输入多次。`hold_attempt` 可用于界面停止和恢复测试。
 
-## Android 构建与连接
+## Android 调试 APK 构建、下载与安装
 
-准备 JDK 17、Gradle 8.9、Android SDK Platform 35、Build Tools 34.0.0 和 Platform Tools。设置 `ANDROID_HOME` 或 Android Studio 本地 SDK 路径。
+准备 JDK 17（或兼容 JDK）、Gradle 8.9、Android SDK Platform 35、Build Tools 34.0.0 和 Platform Tools。设置 `JAVA_HOME`、`ANDROID_HOME`，并将 Gradle 和 ADB 加入 PATH。在仓库根目录运行：
 
 ```powershell
-cd android
-gradle --no-daemon testDebugUnitTest lintDebug assembleDebug
-adb -s SERIAL install -r app/build/outputs/apk/debug/app-debug.apk
+.\android\build-debug.ps1
 ```
 
-APP 支持 Android API 26 及以上。关箱前打开 APP，授权精确定位，开启系统定位，启动 USB 采集前台服务，再用 Root 检测按钮记录 `su -c id` 结果。Root 探针记录命令结果。启动模式准备由操作者执行目标机型上已有证据的步骤，每轮填写经过验证的模式、命令、退出码、前后状态及本地证据引用。
+脚本执行 `testDebugUnitTest`、`lintDebug` 和 `assembleDebug`，输出 `android/app/build/outputs/apk/debug/app-debug.apk`。Gradle 未加入 PATH 时可传入 `-Gradle` 和 `gradle.bat` 的完整路径。
+
+也可以在 [GitHub Actions](https://github.com/yunfei00/gnss-sensitivity-test/actions/workflows/ci.yml?query=branch%3Acodex%2Fphase-1) 打开对应提交的成功运行，登录 GitHub 后在页底 **Artifacts** 下载 **android-debug**，解压得到 `app-debug.apk`。它使用调试签名。正式签名流程若配置，密钥和口令只通过 GitHub Secrets 注入。
+
+```powershell
+adb devices -l
+adb -s SERIAL install -r .\android\app\build\outputs\apk\debug\app-debug.apk
+# 如果使用 Actions 下载的文件，将 APK 路径改为解压后的位置。
+```
+
+APP 支持 Android API 26 及以上。关箱前打开 APP，点击「授权并启动 USB 采集」，授权精确定位并开启系统定位。Android 13 及以上可允许通知，以便查看前台采集通知。用 Root 检测按钮记录 `su -c id` 结果。启动模式准备由操作者执行目标机型上已有证据的步骤，每轮填写经过验证的模式、命令、退出码、前后状态及本地证据引用。
 
 上位机通过 ADB 给 Android 的 `127.0.0.1:18765` 分配动态的本机端口。多台手机时填 USB 序列号；关箱前确认调试授权。Android 先写 SQLite，再通过 JSONL 响应 FETCH。Windows 提交 SQLite 后 ACK。手机连接失效会取消当前采集，已记录事件可在重连或恢复时补传。结束时 Windows 核验采集已停并要求确认 GNSS RF 关闭。若停机确认失败，运行保留为 PAUSED，界面和报告记明原因。
 
