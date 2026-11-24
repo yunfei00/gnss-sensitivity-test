@@ -1,5 +1,5 @@
 from desktop.stage5_sweep import SweepPlan, run_sensitivity_sweep
-from tests.test_stage4_fixed import Cmw, Gss, Phone
+from test_stage4_fixed import Cmw, Gss, Phone
 
 
 def plan():
