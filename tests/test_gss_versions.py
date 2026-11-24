@@ -16,3 +16,8 @@ def test_v10():
     assert v.power_query(23) == "-,SIG_LEVEL,V1_A1,GPS,23,0"
     with pytest.raises(DeviceError):
         v.power_query(0)
+
+
+def test_power_objects():
+    assert DIALECTS["6.00.02"].power_template == "-,POW_LEV,v1_a1,{value},GPS,23,0,0,1,1,1,1"
+    assert DIALECTS["10.02.00"].power_template == "-,POW_LEV,v1,{value},GPS,23,0,0,1,1,1,1"
