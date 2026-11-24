@@ -20,3 +20,6 @@
 
 ## 状态
 **P4 调度内核已提交，硬件适配及 GUI 未完成；不可标记 P4 完成或通过实机验收。**
+
+## 2026-11-24 P4/P5 实机集成更新
+现已新增 `desktop/stage45_gui.py`、`stage45_instruments.py`、`stage45_phone.py`、`gss_calibration.py`，并在 Windows 主界面增加 P4/P5 联合测试页。CMW500 小区与 RRC、GSS7000 场景/功率、Android USB JSONL 原始采集已接入 P4/P5 调度。**本次仍未做现场仪表验收**，所有实机结果须明日验证。V6 功率要求外部校准证据，每轮 HOT 准备仍需现场确认；COLD/WARM/AGPS 未自动化。详见 `docs/stage-5-sensitivity-validation.md`。
