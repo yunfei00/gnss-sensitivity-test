@@ -4,7 +4,8 @@ from pathlib import Path
 from threading import Event
 from uuid import uuid4
 
-from PySide6.QtCore import QThread, Signal, QSettings
+from PySide6.QtCore import QThread, Signal, QSettings, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QPlainTextEdit, QInputDialog, QMessageBox,
                                QFormLayout, QComboBox, QGridLayout, QScrollArea)
@@ -138,11 +139,15 @@ class Stage45Page(QWidget):
         self.p4 = QPushButton("开始 P4 固定 20 次")
         self.p5 = QPushButton("开始 P5 逐档扫描")
         self.cancel = QPushButton("取消并安全停止")
+        self.open_report = QPushButton("打开本次报告")
+        self.open_report.setEnabled(False)
+        self.report_path = None
+        self.open_report.clicked.connect(self.show_report)
         self.cancel.setEnabled(False)
         self.p4.clicked.connect(lambda: self.begin("P4"))
         self.p5.clicked.connect(lambda: self.begin("P5"))
         self.cancel.clicked.connect(self.stop)
-        for button in (self.p4, self.p5, self.cancel):
+        for button in (self.p4, self.p5, self.cancel, self.open_report):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self.status = QLabel("待开始；需先核对屏蔽环境、NAS 注册及校准证据")
@@ -205,6 +210,8 @@ class Stage45Page(QWidget):
                 return
             usb = self.window.adb_monitor.claim(device)
             directory = Path("results/stage45") / str(uuid4())
+            self.report_path = None
+            self.open_report.setEnabled(False)
             self.worker = Stage45Worker(mode, v, usb, self.window.adb, directory)
             self.worker.log.connect(self.append)
             self.worker.ask.connect(self.ask)
@@ -228,7 +235,13 @@ class Stage45Page(QWidget):
             self.worker.stop.set()
             self.append("正在取消；等待 RF 安全停止确认")
 
+    def show_report(self):
+        if self.report_path is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.report_path.resolve())))
+
     def complete(self, result):
+        self.report_path = Path(result["report_html"]) if result.get("report_html") else None
+        self.open_report.setEnabled(self.report_path is not None and self.report_path.is_file())
         self.status.setText("运行状态: " + result.get("status", "未知") +
                             "；" + str(result.get("reason", result.get("verdict", ""))))
         self.append("最终结果: " + str(result))
