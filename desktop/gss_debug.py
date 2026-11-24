@@ -42,7 +42,12 @@ class GssDebugPage(QWidget):
         super().__init__()
         self.window = window
         self.worker = None
-        self.settings = QSettings("GNSS-Sensitivity", "GSS7000")
+        self.settings = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "GNSS-Sensitivity", "GSS7000")
+        legacy = QSettings("GNSS-Sensitivity", "GSS7000")
+        for key in legacy.allKeys():
+            if not self.settings.contains(key):
+                self.settings.setValue(key, legacy.value(key))
+        self.settings.sync()
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("独立 TCP 调试：每条命令新建连接；须核对现场协议。发送成功不等于 RF 状态已验证。"))
         layout.setSpacing(5)
@@ -115,7 +120,7 @@ class GssDebugPage(QWidget):
             return widget
         layout.addLayout(line(button("连接 / 状态", "state"), button("仪表信息", "identify"),
                               button("当前场景", "current"), button("场景时间", "time")))
-        self.scenario_path = QLineEdit()
+        self.scenario_path = QLineEdit(str(self.settings.value("scenario_path", "")))
         self.scenario_path.setPlaceholderText("仪表上的场景完整路径")
         layout.addLayout(line("场景", (self.scenario_path, 1), button("加载", "scenario"),
                               button("启动", "start"), button("停止并复位", "stop")))
@@ -148,6 +153,21 @@ class GssDebugPage(QWidget):
         self.port.textChanged.connect(self.invalidate_power)
         self.tx.currentTextChanged.connect(self.invalidate_power)
         self.version_changed()
+        for widget in (self.host, self.port, self.scenario_path):
+            widget.textChanged.connect(self.save_connection_settings)
+        for widget in (self.tx, self.rx, self.version):
+            widget.currentTextChanged.connect(self.save_connection_settings)
+        self.save_connection_settings()
+
+    def save_connection_settings(self, *_):
+        for key, value in (("host", self.host.text()), ("port", self.port.text()),
+                           ("scenario_path", self.scenario_path.text()),
+                           ("tx", self.tx.currentText()), ("rx", self.rx.currentText()),
+                           ("version", self.version.currentText())):
+            self.settings.setValue(key, value)
+        self.settings.sync()
+        if self.settings.status() != QSettings.Status.NoError:
+            self.append("配置保存失败: " + self.settings.fileName())
 
     def invalidate_power(self, *_):
         self.power_status.setText("已确认设置值：未知（非仪表读回）")
