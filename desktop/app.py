@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFrame, QHBoxLa
 
 from .usb_debug import UsbDebugPage
 from .gss_debug import GssDebugPage
+from .cmw_debug import CmwDebugPage
 from .adb import AdbSnapshot, UsbRun, monitor_devices
 from .core import SAMPLES, DeviceError, LinkError, RunConfig, UserStop
 from .engine import TestEngine
@@ -231,6 +232,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.debug_page, "设备调试")
         self.gss_page = GssDebugPage(self)
         self.tabs.addTab(self.gss_page, "GSS7000 调试")
+        self.cmw_page = CmwDebugPage(self)
+        self.tabs.addTab(self.cmw_page, "CMW500 调试")
 
         self.mode.currentIndexChanged.connect(self.change_mode)
         self.serial.currentIndexChanged.connect(lambda: self.set_busy(self.worker is not None))
@@ -429,12 +432,15 @@ class MainWindow(QMainWindow):
         real_history = selection is not None and not selection[1]["config"]["mock"]
         debugging = hasattr(self, 'debug_page') and self.debug_page.worker is not None
         gss_busy = hasattr(self, 'gss_page') and self.gss_page.worker is not None
-        self.serial.setEnabled(not busy and not debugging and not gss_busy and (not self.mock_mode or real_history or (hasattr(self, 'debug_page') and self.tabs.currentWidget() is self.debug_page)) and self.serial.count() > 0)
+        cmw_busy = hasattr(self, 'cmw_page') and self.cmw_page.worker is not None
+        self.serial.setEnabled(not busy and not debugging and not gss_busy and not cmw_busy and (not self.mock_mode or real_history or (hasattr(self, 'debug_page') and self.tabs.currentWidget() is self.debug_page)) and self.serial.count() > 0)
         if hasattr(self, 'debug_page'):
-            self.debug_page.refresh(busy or gss_busy)
+            self.debug_page.refresh(busy or gss_busy or cmw_busy)
         if hasattr(self, 'gss_page'):
-            self.gss_page.refresh(busy or debugging)
-        busy = busy or debugging or gss_busy
+            self.gss_page.refresh(busy or debugging or cmw_busy)
+        if hasattr(self, 'cmw_page'):
+            self.cmw_page.refresh(busy or debugging or gss_busy)
+        busy = busy or debugging or gss_busy or cmw_busy
         self.search_usb.setEnabled(not busy)
         self.manual_usb.setEnabled(not busy)
         self.start.setEnabled(not busy and (self.mock_mode or self.serial.currentData() is not None))
@@ -712,7 +718,7 @@ class MainWindow(QMainWindow):
         elif self.debug_page.worker is not None:
             self.debug_page.worker.stop.set()
             event.ignore()
-        elif self.gss_page.worker is not None:
+        elif self.gss_page.worker is not None or self.cmw_page.worker is not None:
             event.ignore()
         elif self.adb_monitor.isRunning():
             self.adb_monitor.stop.set()
