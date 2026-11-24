@@ -62,9 +62,7 @@ class Stage45Worker(QThread):
                 count[0] += 1
                 return UsbGnssAdapter(self.usb, self.adb,
                     self.directory / f"phone_audit_{count[0]}.sqlite",
-                    lambda mode: self.evidence(
-                        f"第 {count[0]} 档本轮 {mode} 启动准备：请确认独立测试已准备并填写证据。"),
-                    self.log.emit, self.stop)
+                    None, self.log.emit, self.stop)
             notify = lambda event, data: self.log.emit(event + ": " + str(data))
             if self.mode == "P4":
                 plan = FixedPowerPlan(-120.0, float(v["lat"]), float(v["lon"]),
@@ -133,8 +131,8 @@ class Stage45Page(QWidget):
         form.addWidget(QLabel("SimREPLAYplus 版本"), 9, 0)
         form.addWidget(self.version, 9, 1)
         layout.addLayout(form)
-        layout.addWidget(QLabel("校准要求：必须在整个扫描范围核验 1 dB 线性响应，不能只凭单点测量推算。"
-                                "V6 无 SIG_LEVEL 远程功率读回，每档须提供独立核验证据。"))
+        layout.addWidget(QLabel("HOT 每轮自动检查 PING 就绪、无活动试验，并由 Android 重新启动 GPS_PROVIDER 计时。"
+                                "校准须覆盖整个扫描范围；V6 每档需独立 RF 功率证据。"))
         buttons = QHBoxLayout()
         self.p4 = QPushButton("开始 P4 固定 20 次")
         self.p5 = QPushButton("开始 P5 逐档扫描")
