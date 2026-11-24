@@ -1,5 +1,7 @@
 # 明日现场：P4 / P5 联合测试操作卡
 
+**逐项测试用例与现场签收表**：[`p1-p5-field-acceptance-cases.md`](p1-p5-field-acceptance-cases.md)。请按 P1→P2→P3→P4→P5 顺序执行，共 78 条；逐项记录实际结果和证据。
+
 ## 启动
 1. 在 Windows 上位机更新 `codex/phase-1` 分支，按现有项目依赖运行 `uv run python -m desktop`。
 2. 确保 CMW500 与 GSS7000 通过各自独立调试页通信正常；CMW500 的 LTE Band/EARFCN/带宽/路由/线损已在 P3 核对，手机已在仪表小区 NAS 注册（RRC CONN **不等于** NAS 注册）。
