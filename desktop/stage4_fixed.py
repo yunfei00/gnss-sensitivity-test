@@ -53,7 +53,7 @@ def _persist(path, record):
 def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
     """Run against verified adapters.
 
-    cmw: preflight(), establish_lte(), rrc_connected(), safe_stop()
+    cmw: optional; None means GNSS_ONLY and skips all LTE operations.\n         Otherwise preflight(), establish_lte(), rrc_connected(), safe_stop()
     gss: preflight(), start_scenario(scenario_id), set_power_dbm(dbm),
          verify_power_dbm(dbm), safe_stop()
     phone: preflight(), prepare(mode), attempt(reference, observation_s),
@@ -68,11 +68,11 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
     run_id = str(uuid4())
     record = {"run_id": run_id, "phase": "P4", "mode": "REAL_HARDWARE",
               "started_utc": _now(), "plan": vars(plan).copy(),
-              "status": "RUNNING", "attempts": [], "valid": 0, "passed": 0}
+              "status": "RUNNING", "test_mode": "GNSS_ONLY" if cmw is None else "GNSS_LTE",\n              "attempts": [], "valid": 0, "passed": 0}
     _persist(output, record)
     touched = []
     try:
-        for name, device in (("CMW500", cmw), ("GSS7000", gss), ("USB", phone)):
+        for name, device in (("CMW500", cmw), ("GSS7000", gss), ("USB", phone)):\n            if device is None:\n                continue
             if stop.is_set():
                 raise UserStop("USER_STOP")
             if name == "USB":
@@ -102,7 +102,7 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
         while record["valid"] < SAMPLES:
             if stop.is_set():
                 raise UserStop("USER_STOP")
-            if not cmw.rrc_connected():
+            if cmw is not None and not cmw.rrc_connected():
                 raise DeviceError("LTE RRC 连接丢失")
             if gss.verify_power_dbm(plan.power_dbm) is not True:
                 raise DeviceError("本轮开始前 GNSS 功率未核验")
@@ -112,8 +112,8 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
                 raise DeviceError("手机未返回有效原始遥测")
             if stop.is_set():
                 raise UserStop("USER_STOP")
-            if not cmw.rrc_connected() or gss.verify_power_dbm(plan.power_dbm) is not True:
-                raise DeviceError("采集后 LTE 或 GNSS 功率状态变化，不能计入有效试验")
+            if (cmw is not None and not cmw.rrc_connected()) or gss.verify_power_dbm(plan.power_dbm) is not True:
+                raise DeviceError("采集后 LTE（若启用）或 GNSS 功率状态变化，不能计入有效试验")
             verdict = evaluate(config, payload)
             item = {"number": len(record["attempts"]) + 1, "utc": _now(), **verdict}
             record["attempts"].append(item)
