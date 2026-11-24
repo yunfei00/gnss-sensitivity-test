@@ -33,8 +33,8 @@ class CmwLteAdapter:
             self._call("switch", "ON")
         elif state != "ON":
             raise DeviceError("CMW500 小区状态未知: " + state)
-        if not self.rrc_connected():
-            raise DeviceError("CMW500 RRC 未连接；需另外核对 NAS 注册")
+        self._call("wait_connected")
+        self.log("CMW500 RRC CONN；NAS 注册仍需现场独立核对")
 
     def rrc_connected(self):
         return self._call("rrc") == "CONN"
