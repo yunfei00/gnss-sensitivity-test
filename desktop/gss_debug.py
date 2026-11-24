@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QSettings
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QComboBox, QPushButton, QLabel, QPlainTextEdit, QMessageBox, QDoubleSpinBox)
+    QLineEdit, QComboBox, QPushButton, QLabel, QPlainTextEdit, QMessageBox, QDoubleSpinBox, QToolButton, QFrame)
 from .gss_versions import DIALECTS
 from .gss_remote import exchange, render_command, describe_response, XML_END, run_operation
 
@@ -45,7 +45,8 @@ class GssDebugPage(QWidget):
         self.settings = QSettings("GNSS-Sensitivity", "GSS7000")
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("独立 TCP 调试：每条命令新建连接；须核对现场协议。发送成功不等于 RF 状态已验证。"))
-        form = QFormLayout()
+        layout.setSpacing(5)
+        layout.setContentsMargins(8, 8, 8, 8)
         self.host = QLineEdit(str(self.settings.value("host", "")))
         self.port = QLineEdit(str(self.settings.value("port", "15650") or "15650"))
         self.tx, self.rx = QComboBox(), QComboBox()
@@ -58,29 +59,46 @@ class GssDebugPage(QWidget):
         self.version = QComboBox()
         self.version.addItems(list(DIALECTS))
         self.version.setCurrentText(str(self.settings.value("version", "6.00.02")))
-        form.addRow("SimREPLAYplus 版本（手动确认）", self.version)
-        form.addRow("仪器 IP / 主机", self.host)
-        form.addRow("远控端口", self.port)
-        form.addRow("发送结束符", self.tx)
-        form.addRow("响应结束符（无 = 不读回）", self.rx)
+        self.port.setMaximumWidth(85)
+        self.version.setToolTip("SimREPLAYplus 软件版本，手动确认")
+        def line(*items):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            for item in items:
+                if isinstance(item, str):
+                    row.addWidget(QLabel(item))
+                elif isinstance(item, tuple):
+                    row.addWidget(*item)
+                else:
+                    row.addWidget(item)
+            return row
+        layout.addLayout(line("IP / 主机", (self.host, 1), "端口", self.port, "版本", self.version))
+        settings_row = line("发送结束符", self.tx, "响应结束符", self.rx)
+        self.rx.setToolTip("无 = 不读回")
+        settings_row.addStretch()
+        layout.addLayout(settings_row)
+        self.advanced = QFrame()
+        advanced_layout = QVBoxLayout(self.advanced)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(4)
         self.operation = QComboBox()
         for key, title in OPERATIONS:
             self.operation.addItem(title, key)
         self.template = QLineEdit()
         self.value = QLineEdit()
         self.operation.currentIndexChanged.connect(self.load_template)
-        form.addRow("操作", self.operation)
-        form.addRow("指令模板", self.template)
-        form.addRow("参数（场景完整路径 / GPS 参考 dB；非 dBm）", self.value)
-        layout.addLayout(form)
+        advanced_layout.addLayout(line("操作", self.operation, "参数", (self.value, 1)))
+        self.value.setToolTip("场景完整路径 / GPS 参考 dB，非 dBm")
         row = QHBoxLayout()
         self.save = QPushButton("保存本地指令")
         self.save.clicked.connect(self.save_template)
         self.send = QPushButton("执行选定操作")
         self.send.clicked.connect(self.execute)
+        row.addWidget(QLabel("模板"))
+        row.addWidget(self.template, 1)
         row.addWidget(self.save)
         row.addWidget(self.send)
-        layout.addLayout(row)
+        advanced_layout.addLayout(row)
         self.raw = QLineEdit()
         self.raw.setPlaceholderText("输入单条已核对的原始指令")
         row = QHBoxLayout()
@@ -88,28 +106,39 @@ class GssDebugPage(QWidget):
         self.raw_send = QPushButton("发送原始指令")
         self.raw_send.clicked.connect(lambda: self.submit(self.raw.text()))
         row.addWidget(self.raw_send)
-        layout.addLayout(row)
+        advanced_layout.addLayout(row)
         self.quick_buttons = {}
-        for entries in ((("连接 / 状态", "state"), ("仪表信息", "identify"), ("当前场景", "current")), (("加载场景", "scenario"), ("启动场景", "start"), ("停止并复位", "stop")), (("设置 GPS 参考功率", "power"), ("读取 GPS 参考功率", "read_power"), ("查询场景时间", "time"))):
-            buttons = QHBoxLayout()
-            for title, key in entries:
-                button = QPushButton(title)
-                button.clicked.connect(lambda checked=False, k=key: self.quick(k))
-                self.quick_buttons[key] = button
-                buttons.addWidget(button)
-            layout.addLayout(buttons)
+        def button(title, key):
+            widget = QPushButton(title)
+            widget.clicked.connect(lambda checked=False, k=key: self.quick(k))
+            self.quick_buttons[key] = widget
+            return widget
+        layout.addLayout(line(button("连接 / 状态", "state"), button("仪表信息", "identify"),
+                              button("当前场景", "current"), button("场景时间", "time")))
         self.scenario_path = QLineEdit()
         self.scenario_path.setPlaceholderText("仪表上的场景完整路径")
-        layout.addWidget(self.scenario_path)
+        layout.addLayout(line("场景", (self.scenario_path, 1), button("加载", "scenario"),
+                              button("启动", "start"), button("停止并复位", "stop")))
         self.power = QDoubleSpinBox()
         self.power.setRange(-200, 100)
-        self.power.setSuffix(" dB (参考值，非 dBm)")
-        layout.addWidget(self.power)
+        self.power.setSuffix(" dB")
+        self.power.setToolTip("GPS 全部卫星参考功率，非 dBm")
         self.svid = QLineEdit("23")
-        self.svid.setPlaceholderText("场景中实际启用的 GPS SVID")
-        layout.addWidget(self.svid)
+        self.svid.setMaximumWidth(55)
+        self.svid.setToolTip("仅用于指定卫星功率读回，不影响全部 GPS 功率设置")
+        layout.addLayout(line("GPS 参考功率", self.power, button("设置全部 GPS", "power"),
+                              "读回 SVID", self.svid, button("读取功率", "read_power")))
         self.power_status = QLabel("已确认设置值：未知（非仪表读回）")
         layout.addWidget(self.power_status)
+        self.advanced_toggle = QToolButton()
+        self.advanced_toggle.setText("展开高级指令调试")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.toggled.connect(self.advanced.setVisible)
+        self.advanced_toggle.toggled.connect(lambda expanded: self.advanced_toggle.setText(
+            "收起高级指令调试" if expanded else "展开高级指令调试"))
+        layout.addWidget(self.advanced_toggle)
+        layout.addWidget(self.advanced)
+        self.advanced.hide()
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setMaximumBlockCount(2000)
@@ -127,6 +156,7 @@ class GssDebugPage(QWidget):
         self.settings.setValue("version", self.version.currentText())
         self.invalidate_power()
         self.quick_buttons["read_power"].setEnabled(DIALECTS[self.version.currentText()].read_power)
+        self.svid.setEnabled(DIALECTS[self.version.currentText()].read_power)
         self.load_template()
 
     def quick(self, key):
