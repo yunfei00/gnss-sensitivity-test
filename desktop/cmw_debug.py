@@ -27,6 +27,11 @@ class Worker(QThread):
                     self.result.emit("cell",cmw.cell())
                 elif op=="cell":
                     self.result.emit("cell",cmw.cell())
+                elif op=="prepare":
+                    self.result.emit("route",cmw.prepare_run(*value))
+                elif op=="configure":
+                    for field,actual in cmw.prepare_cell(value).items():
+                        self.result.emit(field,actual)
                 elif op=="rrc":
                     self.result.emit("rrc",cmw.rrc())
                 elif op=="attach":
@@ -75,6 +80,14 @@ class CmwDebugPage(QWidget):
                 row(title,edit,button("读取","read",key))
             else:
                 row(title,edit,button("读取","read",key),button("设置","set",key))
+        self.com=QComboBox()
+        self.com.addItems(["1","2","3","4"])
+        self.com.setCurrentText(str(self.settings.value("com","1")))
+        self.loss=QLineEdit(str(self.settings.value("loss","")))
+        self.loss.setPlaceholderText("实际校准线损 dB")
+        row("COM",self.com,"线损 dB",self.loss,button("初始化 LTE","prepare"),button("应用小区配置","configure"))
+        self.com.currentTextChanged.connect(self.save)
+        self.loss.textChanged.connect(self.save)
         row(button("查询 RRC","rrc"),button("等待手机连接","attach"))
         self.rrc_status=QLabel("RRC：未知（不等同 NAS 注册）")
         layout.addWidget(self.rrc_status)
@@ -91,6 +104,8 @@ class CmwDebugPage(QWidget):
     def save(self,*_):
         self.settings.setValue("host",self.host.text())
         self.settings.setValue("port",self.port.text())
+        self.settings.setValue("com",self.com.currentText())
+        self.settings.setValue("loss",self.loss.text())
         self.settings.sync()
         self.rrc_status.setText("RRC：未知")
         self.status.setText("小区状态：未知；手机注册：尚未远程验证")
@@ -123,7 +138,11 @@ class CmwDebugPage(QWidget):
                 value=self.fields[key].text()
             if op=="query":
                 value=self.raw.text().strip()
-            if op in ("set","switch") and QMessageBox.question(self,"确认仪表操作","确认屏蔽箱、RF 路由、功率和当前测试配置后执行？")!=QMessageBox.StandardButton.Yes:
+            if op=="prepare":
+                value=(int(self.com.currentText()),float(self.loss.text()))
+            if op=="configure":
+                value={k:v.text() for k,v in self.fields.items() if k!="route"}
+            if op in ("set","switch","prepare","configure") and QMessageBox.question(self,"确认仪表操作","确认屏蔽箱、RF 路由、功率和当前测试配置后执行？")!=QMessageBox.StandardButton.Yes:
                 return
             self.status.setText("小区状态：未知；手机注册：尚未远程验证")
             self.worker=Worker(host,port,op,key,value)
