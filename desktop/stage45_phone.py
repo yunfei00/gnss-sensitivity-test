@@ -3,17 +3,18 @@ from pathlib import Path
 from time import monotonic, sleep
 from uuid import uuid4
 
-from .core import DeviceError, LinkError, RunConfig
+from .core import DeviceError, LinkError, RunConfig, UserStop
 from .phone import PhoneSession
 from .storage import Store
 from .transports import AdbTransport
 
 
 class UsbGnssAdapter:
-    def __init__(self, usb, adb, db_path, preparation, log=None):
+    def __init__(self, usb, adb, db_path, preparation, log=None, stop=None):
         self.usb, self.adb = usb, adb
         self.db_path = Path(db_path)
         self.preparation = preparation
+        self.stop = stop
         self.log = log or (lambda *_: None)
         self.transport = None
         self.store = None
@@ -71,6 +72,8 @@ class UsbGnssAdapter:
             "observation_s": observation_s, "satellite_tolerance_ms": 1000})
         deadline = monotonic() + observation_s + 8
         while monotonic() < deadline:
+            if self.stop is not None and self.stop.is_set():
+                raise UserStop("USER_STOP")
             self.transport.check_connection()
             events = list(self.phone.drain(check=self.transport.check_connection))
             results = [event for event in events
