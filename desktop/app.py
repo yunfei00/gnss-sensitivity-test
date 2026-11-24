@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFrame, QHBoxLa
 from .usb_debug import UsbDebugPage
 from .gss_debug import GssDebugPage
 from .cmw_debug import CmwDebugPage
+from .stage45_gui import Stage45Page
 from .adb import AdbSnapshot, UsbRun, monitor_devices
 from .core import SAMPLES, DeviceError, LinkError, RunConfig, UserStop
 from .engine import TestEngine
@@ -314,44 +315,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.settings_page, "测试配置")
 
     def build_stage45(self):
-        """Operator shortcuts into the existing audited engine and report pipeline."""
-        page = QWidget()
-        panel = QVBoxLayout(page)
-        panel.setContentsMargins(12, 14, 12, 12)
-        panel.setSpacing(12)
-        panel.addWidget(label("第四阶段 · 固定功率 20 次", "heading"))
-        panel.addWidget(label(
-            "当前正式引擎起点固定为 -120 dBm。单档测试执行 20 次有效采集，至少 19 次通过。"
-            "GSS7000/CMW500 当前仍需人工提供实机证据，不能将参考 dB 当成 dBm。", wrap=True))
-        fixed = self.button("P4：配置单档 20 次并开始", self.start_fixed_stage, "primary")
-        panel.addWidget(fixed)
-        panel.addWidget(label("第五阶段 · 每档下降 1 dB", "heading"))
-        panel.addWidget(label(
-            "使用“测试配置”中的最低功率和最大档数，从 -120 dBm 开始逐档下降。"
-            "每档 20 次有效采集，首次未达到 19/20 即停止，记录最后通过档。", wrap=True))
-        sweep = self.button("P5：按测试配置开始扫描", self.start_sweep_stage, "primary")
-        panel.addWidget(sweep)
-        panel.addWidget(label(
-            "安全提醒：真实仪表当前为人工确认适配器。"
-            "测试过程中请按提示核对 RF 屏蔽、LTE 注册、校准功率和每轮启动证据；"
-            "未取得独立功率证据不得作为正式灵敏度结论。", wrap=True))
-        panel.addStretch()
-        self.stage45_page = page
-        self.stage45_fixed_button = fixed
-        self.stage45_sweep_button = sweep
-        self.tabs.addTab(page, "P4 / P5 联合测试")
-
-    def start_fixed_stage(self):
-        if self.worker is not None:
-            return
-        self.configuration.fields["min_power_dbm"][0].setText("-120")
-        self.configuration.fields["max_levels"][0].setText("1")
-        self.start_run()
-
-    def start_sweep_stage(self):
-        if self.worker is not None:
-            return
-        self.start_run()
+        self.stage45_page = Stage45Page(self)
+        self.tabs.addTab(self.stage45_page, "P4 / P5 联合测试")
 
     def build_history(self):
         page = QWidget()
@@ -474,20 +439,20 @@ class MainWindow(QMainWindow):
         debugging = hasattr(self, 'debug_page') and self.debug_page.worker is not None
         gss_busy = hasattr(self, 'gss_page') and self.gss_page.worker is not None
         cmw_busy = hasattr(self, 'cmw_page') and self.cmw_page.worker is not None
-        self.serial.setEnabled(not busy and not debugging and not gss_busy and not cmw_busy and (not self.mock_mode or real_history or (hasattr(self, 'debug_page') and self.tabs.currentWidget() is self.debug_page)) and self.serial.count() > 0)
+        stage45_busy = hasattr(self, "stage45_page") and self.stage45_page.worker is not None
+        self.serial.setEnabled(not busy and not debugging and not gss_busy and not cmw_busy and not stage45_busy and (not self.mock_mode or real_history or (hasattr(self, 'debug_page') and self.tabs.currentWidget() is self.debug_page)) and self.serial.count() > 0)
         if hasattr(self, 'debug_page'):
-            self.debug_page.refresh(busy or gss_busy or cmw_busy)
+            self.debug_page.refresh(busy or gss_busy or cmw_busy or stage45_busy)
         if hasattr(self, 'gss_page'):
-            self.gss_page.refresh(busy or debugging or cmw_busy)
+            self.gss_page.refresh(busy or debugging or cmw_busy or stage45_busy)
         if hasattr(self, 'cmw_page'):
-            self.cmw_page.refresh(busy or debugging or gss_busy)
-        busy = busy or debugging or gss_busy or cmw_busy
+            self.cmw_page.refresh(busy or debugging or gss_busy or stage45_busy)
+        if hasattr(self, "stage45_page"):
+            self.stage45_page.refresh(busy or debugging or gss_busy or cmw_busy)
+        busy = busy or debugging or gss_busy or cmw_busy or stage45_busy
         self.search_usb.setEnabled(not busy)
         self.manual_usb.setEnabled(not busy)
         self.start.setEnabled(not busy and (self.mock_mode or self.serial.currentData() is not None))
-        if hasattr(self, "stage45_fixed_button"):
-            self.stage45_fixed_button.setEnabled(not busy and self.serial.currentData() is not None)
-            self.stage45_sweep_button.setEnabled(not busy and self.serial.currentData() is not None)
         self.stop.setEnabled((self.worker is not None and not self.stop_signal.is_set()) or debugging)
         self.resume.setEnabled(not busy and selection is not None and self.resume_allowed(selection[1]))
         recorded = selection[1]["evidence"].get("usb_serial") if real_history else None
@@ -576,7 +541,9 @@ class MainWindow(QMainWindow):
                 self.show_state("ERROR", str(exc))
 
     def begin(self, path, config, run=None):
-        if self.worker is not None or self.debug_page.worker is not None:
+        if (self.worker is not None or self.debug_page.worker is not None
+                or self.gss_page.worker is not None or self.cmw_page.worker is not None
+                or self.stage45_page.worker is not None):
             return
         if config.mock:
             raise LinkError("现场界面不支持模拟运行")
@@ -761,6 +728,9 @@ class MainWindow(QMainWindow):
             event.ignore()
         elif self.debug_page.worker is not None:
             self.debug_page.worker.stop.set()
+            event.ignore()
+        elif self.stage45_page.worker is not None:
+            self.stage45_page.stop()
             event.ignore()
         elif self.gss_page.worker is not None or self.cmw_page.worker is not None:
             event.ignore()
