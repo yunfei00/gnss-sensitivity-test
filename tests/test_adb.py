@@ -134,3 +134,14 @@ def test_tracker_switches_snapshots_on_push_and_periodic_scan(monkeypatch):
             server.join(6)
         assert not server.is_alive()
         assert [len(snapshot.selectable) for snapshot in snapshots] == [0, 1, 1]
+
+
+def test_cli_fallback_windows_single_usb(monkeypatch):
+    def command(_adb, *args):
+        if args == ("devices", "-l"):
+            return "List of devices attached\nABC device model:Phone transport_id:7\n127.0.0.1:5555 device transport_id:8"
+        assert args == ("-d", "get-serialno")
+        return "ABC"
+    monkeypatch.setattr(adb, "run_adb", command)
+    snapshot = adb.scan_cli("adb")
+    assert [d.serial for d in snapshot.selectable] == ["ABC"]

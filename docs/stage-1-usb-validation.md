@@ -85,3 +85,7 @@ APK 路径：android/app/build/outputs/apk/debug/app-debug.apk。保留本机默
 逐项记录 PASS/FAIL：APK 安装、USB 单设备、多设备、Root、HELLO/PING、真实卫星遥测、首次新鲜定位、TTFF、参与解算卫星、停止、掉线、重新连接。保存本地日志；不要提交客户位置或设备信息到公开仓库。
 
 CI 通过仅证明自动测试，不代表上述实机验收完成。阶段一通过后才进入 GSS7000 独立控制。
+
+## USB 搜索与排查
+
+现场界面仅支持真实 USB。顶部“搜索 USB 设备”立即请求后台刷新；“输入序列号”按 adb devices 显示的序列号重新搜索，只有确认在线 USB 且传输标识有效才允许使用。鼠标悬停状态可查看 ADB 路径和扫描诊断。优先使用 ADB 类型跟踪，无法识别时回退到 adb devices -l 和 adb -d get-serialno。多台设备若旧版 ADB 不提供 USB 类型，先仅连接目标手机或更新 Platform Tools。历史 Mock 记录可查看但不能恢复。

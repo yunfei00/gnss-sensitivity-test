@@ -58,35 +58,17 @@ def console(tmp_path, monkeypatch, app):
         wait_for(app, lambda: not window.adb_monitor.isRunning() and not window.isVisible())
 
 
-def test_window_start_stop_resume_history(app, console):
+def test_real_only_and_manual_refresh(console):
     window, _ = console
-    try:
-        window.faults.setText("hold_attempt")
-        window.start.click()
-        wait_for(app, lambda: window.state.property("state") == "ATTEMPT_RUNNING")
-        assert "CMW500 LTE" in window.devices.text()
-        window.stop.click()
-        wait_for(app, lambda: window.worker is None)
-        assert window.state.property("state") == "STOPPED"
-        assert window.history.rowCount() == 1
-        assert window.history_attempts.rowCount() == 1
-        assert window.attempts.rowCount() == 1
-        window.faults.clear()
-        window.resume.click()
-        wait_for(app, lambda: window.worker is None)
-        assert window.state.property("state") == "FINISHED"
-        assert window.metric_labels["ttff_s"].text().endswith(" s")
-        assert window.progress.value() == 20
-        assert window.history_attempts.rowCount() == 61
-        assert window.attempts.rowCount() == 61
-        assert window.report.is_file()
-    finally:
-        window.faults.clear()
+    assert window.mode.count() == 1
+    assert not window.mock_mode
+    assert not window.start.isEnabled()
+    window.search_usb.click()
+    assert window.adb_monitor.stop.refresh.is_set()
 
 
 def test_usb_discovery_selection_and_hotplug(app, console):
     window, publish = console
-    window.mode.setCurrentIndex(1)
     assert not window.start.isEnabled()
     assert window.serial.placeholderText() == "未发现 USB 设备"
 
@@ -120,7 +102,6 @@ def test_usb_discovery_selection_and_hotplug(app, console):
 
 def test_real_run_pins_selected_serial_and_reconnection_requires_resume(app, console):
     window, publish = console
-    window.mode.setCurrentIndex(1)
     config = RunConfig(-120, 1, scenario_id="demo", scenario_hash="fixture",
                        calibration_ref="fixture", scenario_signals="GPS L1", mock=False)
     window.configuration.set_values(asdict(config))
@@ -162,22 +143,10 @@ def test_real_run_pins_selected_serial_and_reconnection_requires_resume(app, con
     wait_for(app, lambda: window.worker is None)
 
 
-def test_config_preserves_drafts_and_guides_invalid_input(console):
+def test_real_config_requires_device(console):
     window, _ = console
-    power = window.configuration.fields["min_power_dbm"][0]
-    power.setText("-135")
-    window.mode.setCurrentIndex(1)
-    assert power.text() == ""
-    window.configuration.fields["scenario_id"][0].setText("现场场景")
-    window.mode.setCurrentIndex(0)
-    assert power.text() == "-135"
-    power.setText("20MHz")
-    window.start.click()
-    assert window.worker is None
-    assert window.tabs.currentWidget() is window.settings_page
-    assert "最低功率" in window.config_issue.text()
-    window.mode.setCurrentIndex(1)
-    assert window.configuration.fields["scenario_id"][0].text() == "现场场景"
+    assert not window.start.isEnabled()
+    assert window.configuration.fields["min_power_dbm"][0].text() == ""
 
 
 def test_evidence_form_requires_explicit_safety_and_valid_readback(app):

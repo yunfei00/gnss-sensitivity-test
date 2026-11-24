@@ -53,6 +53,7 @@ class AdbDevice:
 class AdbSnapshot:
     devices: tuple[AdbDevice, ...] = ()
     error: str = ""
+    diagnostic: str = ""
 
     @property
     def selectable(self):
@@ -163,6 +164,26 @@ def _tracker():
         yield sock
 
 
+def scan_cli(adb):
+    raw = run_adb(adb, "devices", "-l")
+    try:
+        wired = run_adb(adb, "-d", "get-serialno")
+    except LinkError:
+        wired = ""
+    devices = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or line.startswith(("List of devices", "*")):
+            continue
+        serial, state = parts[:2]
+        attrs = dict(part.split(":", 1) for part in parts[2:] if ":" in part)
+        tid = attrs.get("transport_id", "0")
+        devices.append(AdbDevice(serial, int(tid) if tid.isdigit() else 0,
+                                 state.upper(), bool(attrs.get("usb")) or serial == wired,
+                                 attrs.get("model", "").replace("_", " ")))
+    return AdbSnapshot(tuple(devices), diagnostic=raw)
+
+
 def monitor_devices(publish, stop, adb="adb"):
     """Subscribe to push updates and renew the initial snapshot every ten seconds."""
     start_server = True
@@ -172,13 +193,23 @@ def monitor_devices(publish, stop, adb="adb"):
             if start_server:
                 run_adb(adb, "start-server")
             with _tracker() as sock:
-                publish(parse_snapshot(_frame(sock)))
+                snapshot = parse_snapshot(_frame(sock))
+                publish(snapshot if snapshot.selectable else scan_cli(adb))
                 start_server = False
-                while not stop.is_set() and monotonic() < end:
+                while not stop.is_set() and monotonic() < end and not (getattr(stop, "refresh", None) and stop.refresh.is_set()):
                     if select([sock], [], [], min(0.2, max(0, end - monotonic())))[0]:
-                        publish(parse_snapshot(_frame(sock)))
+                        snapshot = parse_snapshot(_frame(sock))
+                        publish(snapshot if snapshot.selectable else scan_cli(adb))
         except (LinkError, OSError) as exc:
             reason = "ADB USB 扫描超时" if isinstance(exc, TimeoutError) else str(exc)
-            publish(AdbSnapshot(error=f"ADB USB 扫描失败：{reason}"))
+            try:
+                publish(scan_cli(adb))
+            except LinkError as fallback:
+                publish(AdbSnapshot(error=f"ADB USB 扫描失败：{reason}；{fallback}"))
             start_server = True
-        stop.wait(max(0, end - monotonic()))
+        while not stop.is_set() and monotonic() < end:
+            if getattr(stop, "refresh", None) and stop.refresh.is_set():
+                break
+            stop.wait(min(0.2, max(0, end - monotonic())))
+        if getattr(stop, "refresh", None):
+            stop.refresh.clear()

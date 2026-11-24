@@ -2,6 +2,7 @@
 from collections import Counter
 from dataclasses import asdict
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 from threading import Event, Lock
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 from PySide6.QtCore import QSignalBlocker, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLineEdit,
-                               QMainWindow, QProgressBar, QPushButton, QTabWidget, QTableWidgetItem,
+                               QInputDialog, QMainWindow, QProgressBar, QPushButton, QTabWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
 from .usb_debug import UsbDebugPage
@@ -34,6 +35,7 @@ class AdbMonitor(QThread):
         super().__init__()
         self.adb = adb
         self.stop = Event()
+        self.stop.refresh = Event()
         self.lock = Lock()
         self.snapshot = AdbSnapshot()
         self.usb = None
@@ -199,14 +201,19 @@ class MainWindow(QMainWindow):
         layout.addLayout(body, 1)
         toolbar = QHBoxLayout()
         self.mode = QComboBox()
-        self.mode.addItems(["MOCK · 合成设备", "现场 · USB ADB"])
+        self.mode.addItem("现场 · USB ADB")
         self.mode.setAccessibleName("测试模式")
-        toolbar.addWidget(self.mode)
+        self.mode.hide()
         self.serial = QComboBox()
         self.serial.setPlaceholderText("正在扫描 USB 设备…")
         self.serial.setAccessibleName("ADB USB 设备")
         self.serial.setMinimumWidth(205)
         toolbar.addWidget(self.serial, 1)
+        self.search_usb = self.button("搜索 USB 设备", self.refresh_usb)
+        self.manual_usb = self.button("输入序列号", self.choose_usb)
+        toolbar.addWidget(self.search_usb)
+        toolbar.addWidget(self.manual_usb)
+        self.requested_serial = None
         self.start = self.button("开始测试", self.start_run, "primary")
         self.stop = self.button("安全停止", self.stop_run, "stop")
         toolbar.addWidget(self.start)
@@ -338,7 +345,7 @@ class MainWindow(QMainWindow):
         self.banner.style().polish(self.banner)
 
     def change_mode(self, *_):
-        mock = self.mode.currentIndex() == 0
+        mock = False
         if self.mock_mode is not None:
             self.drafts[self.mock_mode] = self.configuration.draft()
         defaults = asdict(RunConfig(-122, 3))
@@ -353,7 +360,18 @@ class MainWindow(QMainWindow):
         self.show_mode(mock)
         self.set_busy(self.worker is not None)
 
+    def refresh_usb(self):
+        self.usb_status.setText("正在搜索 USB 设备…")
+        self.adb_monitor.stop.refresh.set()
+
+    def choose_usb(self):
+        serial, ok = QInputDialog.getText(self, "USB 序列号", "输入 adb devices 显示的序列号")
+        if ok and serial.strip():
+            self.requested_serial = serial.strip()
+            self.refresh_usb()
+
     def update_usb(self, snapshot):
+        self.usb_status.setToolTip(f"ADB: {shutil.which(self.adb) or self.adb}\n{snapshot.diagnostic}")
         if hasattr(self, 'debug_page') and self.debug_page.worker is not None:
             self.usb_status.setText(snapshot.description)
             return
@@ -378,16 +396,25 @@ class MainWindow(QMainWindow):
                 self.serial.addItem(device.label, device)
             index = next((i for i, device in enumerate(devices)
                           if selected and device.serial == selected.serial), -1)
-            self.serial.setCurrentIndex(0 if len(devices) == 1 else index)
+            if self.requested_serial:
+                index = next((i for i, device in enumerate(devices)
+                              if device.serial == self.requested_serial), -1)
+                self.serial.setCurrentIndex(index)
+                if index >= 0:
+                    self.requested_serial = None
+            else:
+                self.serial.setCurrentIndex(0 if len(devices) == 1 else index)
         self.usb_status.setText(snapshot.description)
-        self.usb_status.setVisible(bool(devices) or snapshot.description != "未发现 USB 设备")
+        self.usb_status.show()
+        if self.requested_serial:
+            self.usb_status.setText(f"未确认指定 USB 设备 {self.requested_serial}；{snapshot.description}")
         self.set_busy(False)
 
     def resume_allowed(self, run):
         if run["status"] == "FINISHED":
             return False
         if run["config"]["mock"]:
-            return True
+            return False
         selected = self.serial.currentData()
         recorded = run["evidence"].get("usb_serial")
         return selected is not None and (not recorded or selected.serial == recorded)
@@ -402,6 +429,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'debug_page'):
             self.debug_page.refresh(busy)
         busy = busy or debugging
+        self.search_usb.setEnabled(not busy)
+        self.manual_usb.setEnabled(not busy)
         self.start.setEnabled(not busy and (self.mock_mode or self.serial.currentData() is not None))
         self.stop.setEnabled(busy and not self.stop_signal.is_set())
         self.resume.setEnabled(not busy and selection is not None and self.resume_allowed(selection[1]))
@@ -493,7 +522,9 @@ class MainWindow(QMainWindow):
     def begin(self, path, config, run=None):
         if self.worker is not None or self.debug_page.worker is not None:
             return
-        actual_mock = config.mock
+        if config.mock:
+            raise LinkError("现场界面不支持模拟运行")
+        actual_mock = False
         previous = self.read_attempts(path, run) if run else []
         usb = None
         if not actual_mock:
