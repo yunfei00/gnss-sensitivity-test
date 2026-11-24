@@ -66,3 +66,30 @@ def test_invalid_not_counted(tmp_path):
     assert result["status"] == "PAUSED"
     assert result["valid"] == 0
     assert phone.calls == 3
+
+
+def test_gnss_only_no_cmw_required(tmp_path):
+    phone = Phone()
+    result = run_fixed_power(plan(), None, Gss(), phone, tmp_path / "gnss.json")
+    assert result["status"] == "FINISHED"
+    assert result["test_mode"] == "GNSS_ONLY"
+    assert result["valid"] == result["passed"] == 20
+    assert phone.calls == 20
+
+
+def test_gnss_only_rejects_unverified_power(tmp_path):
+    class Unverified(Gss):
+        def verify_power_dbm(self, value): return False
+    result = run_fixed_power(plan(), None, Unverified(), Phone(), tmp_path / "gnss.json")
+    assert result["status"] == "PAUSED"
+    assert result["valid"] == 0
+    assert "verdict" not in result
+
+
+def test_lte_mode_is_still_enforced(tmp_path):
+    class Disconnected(Cmw):
+        def rrc_connected(self): return False
+    result = run_fixed_power(plan(), Disconnected(), Gss(), Phone(), tmp_path / "lte.json")
+    assert result["test_mode"] == "GNSS_LTE"
+    assert result["status"] == "PAUSED"
+    assert result["valid"] == 0
