@@ -75,6 +75,8 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
         for name, device in (("CMW500", cmw), ("GSS7000", gss), ("USB", phone)):
             if stop.is_set():
                 raise UserStop("USER_STOP")
+            if name == "USB":
+                touched.append(("phone", phone))  # USB preflight may already own a live session.
             device.preflight()
             notify("PREFLIGHT", {"device": name})
         touched.append(("cmw", cmw))
@@ -86,7 +88,6 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
         gss.set_power_dbm(plan.power_dbm)
         if gss.verify_power_dbm(plan.power_dbm) is not True:
             raise DeviceError("GNSS 固定功率未核验；禁止生成正式结果")
-        touched.append(("phone", phone))
         # evaluate expects the same real-data contract as the existing engine.
         from .core import RunConfig
         config = RunConfig(min_power_dbm=-200, max_levels=1,
