@@ -103,10 +103,16 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
                 raise UserStop("USER_STOP")
             if not cmw.rrc_connected():
                 raise DeviceError("LTE RRC 连接丢失")
+            if gss.verify_power_dbm(plan.power_dbm) is not True:
+                raise DeviceError("本轮开始前 GNSS 功率未核验")
             phone.prepare(plan.startup_mode)
             payload = phone.attempt(config.reference, plan.observation_s)
             if not isinstance(payload, dict):
                 raise DeviceError("手机未返回有效原始遥测")
+            if stop.is_set():
+                raise UserStop("USER_STOP")
+            if not cmw.rrc_connected() or gss.verify_power_dbm(plan.power_dbm) is not True:
+                raise DeviceError("采集后 LTE 或 GNSS 功率状态变化，不能计入有效试验")
             verdict = evaluate(config, payload)
             item = {"number": len(record["attempts"]) + 1, "utc": _now(), **verdict}
             record["attempts"].append(item)
