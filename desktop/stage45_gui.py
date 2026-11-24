@@ -7,7 +7,7 @@ from uuid import uuid4
 from PySide6.QtCore import QThread, Signal, QSettings
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QPlainTextEdit, QInputDialog, QMessageBox,
-                               QFormLayout, QComboBox)
+                               QFormLayout, QComboBox, QGridLayout, QScrollArea)
 
 from .gss_calibration import GssCalibration
 from .stage4_fixed import FixedPowerPlan, run_fixed_power
@@ -94,7 +94,9 @@ class Stage45Page(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
         layout.addWidget(QLabel("P4：-120 dBm 固定功率 20 次；P5：-120 dBm 起逐档 -1 dB，首次失败停止。"))
-        form = QFormLayout()
+        form = QGridLayout()
+        form.setHorizontalSpacing(8)
+        form.setVerticalSpacing(5)
         self.fields = {}
         defaults = {
             "gss_host": str(gss.value("host", "")), "gss_port": str(gss.value("port", "15650")),
@@ -112,16 +114,19 @@ class Stage45Page(QWidget):
             "calibration": "校准证据编号", "plane": "功率参考平面",
             "lat": "场景纬度", "lon": "场景经度",
             "min_power": "P5 最低功率 (dBm)", "levels": "P5 最大档数"}
-        for key, default in defaults.items():
+        for index, (key, default) in enumerate(defaults.items()):
             edit = QLineEdit(str(self.settings.value(key, default)))
             self.fields[key] = edit
             edit.textChanged.connect(self.save)
-            form.addRow(labels[key], edit)
+            row, column = divmod(index, 2)
+            form.addWidget(QLabel(labels[key]), row, column * 2)
+            form.addWidget(edit, row, column * 2 + 1)
         self.version = QComboBox()
         self.version.addItems(["6.00.02", "10.02.00"])
         self.version.setCurrentText(str(self.settings.value("version", gss.value("version", "6.00.02"))))
         self.version.currentTextChanged.connect(self.save)
-        form.addRow("SimREPLAYplus 版本", self.version)
+        form.addWidget(QLabel("SimREPLAYplus 版本"), 9, 0)
+        form.addWidget(self.version, 9, 1)
         layout.addLayout(form)
         layout.addWidget(QLabel("校准要求：必须在整个扫描范围核验 1 dB 线性响应，不能只凭单点测量推算。"
                                 "V6 无 SIG_LEVEL 远程功率读回，每档须提供独立核验证据。"))
