@@ -14,6 +14,7 @@ from .stage4_fixed import FixedPowerPlan, run_fixed_power
 from .stage5_sweep import SweepPlan, run_sensitivity_sweep
 from .stage45_instruments import CmwLteAdapter, GssCalibratedAdapter
 from .stage45_phone import UsbGnssAdapter
+from .stage45_reports import export_stage45
 from .core import DeviceError, UserStop
 
 
@@ -75,6 +76,9 @@ class Stage45Worker(QThread):
                                  v["scenario"], v["calibration"])
                 result = run_sensitivity_sweep(plan, cmw, gss, phone,
                                                self.directory, self.stop, notify)
+            report_html, report_csv = export_stage45(self.directory)
+            result["report_html"] = str(report_html)
+            result["report_csv"] = str(report_csv)
             self.completed.emit(result)
         except Exception as exc:
             self.completed.emit({"status": "PAUSED", "reason": str(exc)})
