@@ -44,8 +44,6 @@ class UsbGnssAdapter:
             if hello.get("active_attempt") is not None:
                 raise DeviceError("手机已有其他活动试验")
             self.instance_id = hello["instance_id"]
-            if hello.get("active_run") is not None:
-                raise DeviceError("手机仍属于上一运行；请先在 USB 调试页停止并核对")
             self.phone.command("CONFIGURE_RUN", payload={"startup_mode": "HOT"})
             self.log("手机 HELLO: " + str(hello.get("device_id")))
         except Exception:
