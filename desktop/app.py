@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFrame, QHBoxLa
                                QMainWindow, QProgressBar, QPushButton, QTabWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
+from .usb_debug import UsbDebugPage
 from .adb import AdbSnapshot, UsbRun, monitor_devices
 from .core import SAMPLES, DeviceError, LinkError, RunConfig, UserStop
 from .engine import TestEngine
@@ -218,12 +219,15 @@ class MainWindow(QMainWindow):
         self.build_dashboard()
         self.build_settings()
         self.build_history()
+        self.debug_page = UsbDebugPage(self)
+        self.tabs.addTab(self.debug_page, "设备调试")
 
         self.mode.currentIndexChanged.connect(self.change_mode)
         self.serial.currentIndexChanged.connect(lambda: self.set_busy(self.worker is not None))
         self.change_mode()
         self.reload_history()
         self.set_busy(False)
+        self.tabs.currentChanged.connect(lambda: self.set_busy(self.worker is not None))
         self.adb_monitor.start()
 
     @staticmethod
@@ -350,6 +354,9 @@ class MainWindow(QMainWindow):
         self.set_busy(self.worker is not None)
 
     def update_usb(self, snapshot):
+        if hasattr(self, 'debug_page') and self.debug_page.worker is not None:
+            self.usb_status.setText(snapshot.description)
+            return
         if self.worker is not None:
             self.usb_status.show()
             usb = self.worker.usb
@@ -390,7 +397,11 @@ class MainWindow(QMainWindow):
             widget.setEnabled(not busy)
         selection = self.selected()
         real_history = selection is not None and not selection[1]["config"]["mock"]
-        self.serial.setEnabled(not busy and (not self.mock_mode or real_history) and self.serial.count() > 0)
+        debugging = hasattr(self, 'debug_page') and self.debug_page.worker is not None
+        self.serial.setEnabled(not busy and not debugging and (not self.mock_mode or real_history or (hasattr(self, 'debug_page') and self.tabs.currentWidget() is self.debug_page)) and self.serial.count() > 0)
+        if hasattr(self, 'debug_page'):
+            self.debug_page.refresh(busy)
+        busy = busy or debugging
         self.start.setEnabled(not busy and (self.mock_mode or self.serial.currentData() is not None))
         self.stop.setEnabled(busy and not self.stop_signal.is_set())
         self.resume.setEnabled(not busy and selection is not None and self.resume_allowed(selection[1]))
@@ -480,7 +491,7 @@ class MainWindow(QMainWindow):
                 self.show_state("ERROR", str(exc))
 
     def begin(self, path, config, run=None):
-        if self.worker is not None:
+        if self.worker is not None or self.debug_page.worker is not None:
             return
         actual_mock = config.mock
         previous = self.read_attempts(path, run) if run else []
@@ -657,6 +668,9 @@ class MainWindow(QMainWindow):
         self.closing = True
         if self.worker is not None:
             self.stop_run()
+            event.ignore()
+        elif self.debug_page.worker is not None:
+            self.debug_page.worker.stop.set()
             event.ignore()
         elif self.adb_monitor.isRunning():
             self.adb_monitor.stop.set()
