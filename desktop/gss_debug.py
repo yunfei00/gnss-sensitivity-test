@@ -11,8 +11,7 @@ OPERATIONS = (("identify", "型号 / 版本"), ("state", "查询状态"),
               ("current", "当前场景"), ("scenario", "加载场景"), ("trigger", "软件触发模式"), ("start", "启动场景"), ("stop", "停止场景"),
               ("power", "设置 GPS 功率（参考 dB）"), ("read_power", "读取功率"), ("time", "查询场景时间"))
 DEFAULTS = {"identify": "*IDN?", "state": "NULL", "current": "SC_NAME",
-            "scenario": "SC,{value}", "trigger": "TR,0", "start": "RU", "stop": "-,EN,1",
-            "power": "-,POW_LEV,v1,{value},GPS,23,0,0,1,1,1,1"}
+            "scenario": "SC,{value}", "trigger": "TR,0", "start": "RU", "stop": "-,EN,1"}
 ENDS = {"LF": b"\n", "CRLF": b"\r\n", "CR": b"\r", "无": b""}
 
 
@@ -187,7 +186,7 @@ class GssDebugPage(QWidget):
             if not host or not 1 <= port <= 65535:
                 raise ValueError("无效地址或端口")
             dialect = DIALECTS[self.version.currentText()]
-            commands = [DEFAULTS[key]] if key not in ("read_power", "time") else []
+            commands = [DEFAULTS[key]] if key not in ("read_power", "time", "power") else []
             expected = None
             if key == "scenario":
                 path = self.scenario_path.text().strip()
@@ -200,7 +199,7 @@ class GssDebugPage(QWidget):
             elif key == "stop":
                 expected = 2
             elif key == "power":
-                commands = [render_command(DEFAULTS[key], self.power.value())]
+                commands = [render_command(dialect.power_template, self.power.value())]
             elif key == "read_power":
                 svid = int(self.svid.text())
                 commands = [dialect.power_query(svid)]
@@ -225,6 +224,12 @@ class GssDebugPage(QWidget):
         key = self.operation.currentData()
         dialect = DIALECTS[self.version.currentText()]
         default = dialect.time_command if key == "time" else DEFAULTS.get(key, "")
+        if key == "power":
+            default = dialect.power_template
+            setting = "commands/" + dialect.version + "/power"
+            if dialect.version == "6.00.02" and self.settings.value(setting) == "-,POW_LEV,v1,{value},GPS,23,0,0,1,1,1,1":
+                self.settings.setValue(setting, default)
+                self.settings.sync()
         if key == "read_power":
             default = dialect.power_query(23) if dialect.read_power else ""
         self.template.setText(str(self.settings.value("commands/" + dialect.version + "/" + key, "") or default))
