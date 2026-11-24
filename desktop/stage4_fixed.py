@@ -72,17 +72,20 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
     _persist(output, record)
     touched = []
     try:
-        for name, device in (("CMW500", cmw), ("GSS7000", gss), ("USB", phone)):\n            if device is None:\n                continue
+        for name, device in (("CMW500", cmw), ("GSS7000", gss), ("USB", phone)):
+            if device is None:
+                continue
             if stop.is_set():
                 raise UserStop("USER_STOP")
             if name == "USB":
                 touched.append(("phone", phone))  # USB preflight may already own a live session.
             device.preflight()
             notify("PREFLIGHT", {"device": name})
-        touched.append(("cmw", cmw))
-        cmw.establish_lte()
-        if not cmw.rrc_connected():
-            raise DeviceError("LTE RRC 未连接")
+        if cmw is not None:
+            touched.append(("cmw", cmw))
+            cmw.establish_lte()
+            if not cmw.rrc_connected():
+                raise DeviceError("LTE RRC 未连接")
         touched.append(("gss", gss))
         gss.start_scenario(plan.scenario_id)
         gss.set_power_dbm(plan.power_dbm)
