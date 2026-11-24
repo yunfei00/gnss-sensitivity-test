@@ -24,6 +24,7 @@ class UsbGnssAdapter:
 
     def preflight(self):
         self.usb.check()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.store = Store(self.db_path)
         self.store.__enter__()
         try:
@@ -66,7 +67,7 @@ class UsbGnssAdapter:
         self.phone.command("PREPARE_ATTEMPT", attempt_id, {
             "startup_mode": "HOT", "preparation_evidence": evidence})
         self.phone.command("START_ATTEMPT", attempt_id, {
-            "power_dbm": None, "reference": reference,
+            "reference": reference,
             "observation_s": observation_s, "satellite_tolerance_ms": 1000})
         deadline = monotonic() + observation_s + 8
         while monotonic() < deadline:
