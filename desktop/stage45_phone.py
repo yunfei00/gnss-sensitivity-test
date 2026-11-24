@@ -55,7 +55,13 @@ class UsbGnssAdapter:
             raise LinkError("手机未连接")
         if mode != "HOT":
             raise DeviceError("当前 USB 适配器仅实现 HOT；COLD/WARM/AGPS 需要额外现场准备步骤")
-        evidence = self.preparation(mode)
+        status = self.phone.command("PING")
+        if status.get("ready") is not True or status.get("active_attempt") is not None:
+            raise DeviceError("手机仍在采集或 GNSS 未就绪，不能开始下一次 HOT")
+        evidence = (self.preparation(mode) if self.preparation is not None else
+                    "AUTO_HOT: prior attempt stopped; PING ready and no active_attempt; "
+                    "Android GPS_PROVIDER registers a fresh attempt and monotonic t0; "
+                    "GNSS aiding state is intentionally not reset")
         if not isinstance(evidence, str) or not evidence.strip():
             raise DeviceError("缺少本轮 HOT 启动准备证据")
         self.prepared = (str(uuid4()), evidence)
