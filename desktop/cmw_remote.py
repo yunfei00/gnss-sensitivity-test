@@ -102,3 +102,42 @@ class CmwSession:
         if not same:
             raise DeviceError("读回不一致: "+actual)
         return actual
+
+    def prepare_run(self, port, loss):
+        routes = {1:"RF1C,RX1,RF1C,TX1",2:"RF2C,RX1,RF2C,TX1",3:"RF3C,RX2,RF3C,TX2",4:"RF4C,RX2,RF4C,TX2"}
+        if port not in routes or not math.isfinite(loss) or loss < 0:
+            raise DeviceError("COM 或线损无效")
+        self.write("INST LTE")
+        if self.cell() != "OFF":
+            raise DeviceError("初始化前必须关闭小区")
+        route = routes[port]
+        cmd = FIELDS["route"]
+        if self.read(cmd+"?").replace(" ","").upper() != route:
+            self.write(cmd+" "+route)
+            if self.read(cmd+"?").replace(" ","").upper() != route:
+                raise DeviceError("RF 路由读回不一致")
+        for direction in ("INPut","OUTPut"):
+            cmd = "CONFigure:LTE:SIGN:RFSettings:EATTenuation:"+direction
+            self.write(cmd+" "+str(loss))
+            if not math.isclose(float(self.read(cmd+"?")),loss,rel_tol=0,abs_tol=0.05):
+                raise DeviceError("线损读回不一致")
+        for command in (
+            "CONFigure:LTE:SIGN:UEReport:ENABle OFF",
+            "CONFigure:LTE:SIGN:UEReport:RINTerval I120",
+            "CONFigure:LTE:SIGN:UEReport:ENABle ON",
+            "CONFigure:LTE:SIGN:UL:PUSCh:TPC:SET MAXP",
+            "CONFigure:LTE:SIGN:UL:PMAX 23",
+            "CONFigure:LTE:SIGN:CONNection:PCC:STYPe RMC",
+            "CONFigure:LTE:SIGN:CELL:SECurity:AUTHenticat ON",
+            "CONFigure:LTE:SIGN:CELL:SECurity:NAS ON",
+            "CONFigure:LTE:SIGN:CELL:SECurity:AS ON",
+            "CONFigure:LTE:SIGN:CELL:SECurity:IALGorithm S3G",
+        ):
+            self.write(command)
+        return route
+    def prepare_cell(self, values):
+        order = ("duplex","band","bandwidth","channel","power")
+        values = {key:validate(key,values[key]) for key in order}
+        if self.cell()!="OFF":
+            raise DeviceError("配置前必须关闭小区")
+        return {key:self.configure(key,values[key]) for key in order}
