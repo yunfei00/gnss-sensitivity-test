@@ -589,6 +589,9 @@ class MainWindow(QMainWindow):
         dialog.show()
 
     def stop_run(self):
+        if self.debug_page.worker is not None:
+            self.debug_page.stop()
+            return
         self.stop_signal.set()
         self.stop.setEnabled(False)
         self.show_state("STOPPING", "正在取消采集并确认 RF 安全")

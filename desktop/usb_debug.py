@@ -1,11 +1,12 @@
 """Independent real-phone USB diagnostics; never creates sensitivity results."""
 import json
+import re
 from threading import Event
 from time import monotonic
 from uuid import uuid4
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit, QLabel, QGridLayout, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView
 
 from .adb import run_adb
 from .core import LinkError
@@ -26,8 +27,23 @@ def exchange(transport, run, kind, seq, attempt=None, payload=None):
     return data
 
 
+def probe_root(adb, serial):
+    identity = run_adb(adb, "shell", "id", serial=serial)
+    if re.search(r"\buid=0\b", identity):
+        return "ADB Shell 已获得 Root", identity
+    try:
+        elevated = run_adb(adb, "shell", "su", "-c", "id", serial=serial)
+    except LinkError as exc:
+        return "未确认 Root（基础定位仍可用）", f"{identity}\n{exc}"
+    return ("su 已获得 Root" if re.search(r"\buid=0\b", elevated)
+            else "未确认 Root"), f"{identity}\n{elevated}"
+
+
 class DebugWorker(QThread):
     log = Signal(str)
+    status = Signal(dict)
+    telemetry = Signal(dict)
+    phase = Signal(str)
 
     def __init__(self, usb, adb, action, root):
         super().__init__()
@@ -53,13 +69,20 @@ class DebugWorker(QThread):
                     "org.gnss.sensitivity/.MainActivity", serial=self.usb.device.serial))
                 return
             if self.action == "root":
-                self.log.emit(run_adb(self.adb, "shell", "su", "-c", "id", serial=self.usb.device.serial))
+                result, evidence = probe_root(self.adb, self.usb.device.serial)
+                self.status.emit({"shell_root": result})
+                self.log.emit(evidence)
                 return
+            self.phase.emit("正在连接采集服务")
             transport.connect()
             status = command("HELLO")
+            self.status.emit(status)
+            self.phase.emit("通信正常")
             self.log.emit("HELLO: " + json.dumps(status, ensure_ascii=False))
             if self.action == "status":
-                self.log.emit("PING: " + json.dumps(command("PING"), ensure_ascii=False))
+                ping = command("PING")
+                self.status.emit(ping)
+                self.log.emit("PING: " + json.dumps(ping, ensure_ascii=False))
                 return
             if status.get("ready") is not True or status.get("active_attempt") is not None:
                 raise LinkError("手机定位未就绪或已有试验")
@@ -76,6 +99,7 @@ class DebugWorker(QThread):
                     return
                 command("START_ATTEMPT", attempt, {"reference": {"latitude": 0, "longitude": 0},
                     "observation_s": 60, "satellite_tolerance_ms": 1500})
+                self.phase.emit("正在定位采集")
                 cursor = 0
                 deadline = monotonic() + 70
                 while not self.stop.is_set() and monotonic() < deadline:
@@ -92,19 +116,23 @@ class DebugWorker(QThread):
                         event["payload"].pop("horizontal_error_m", None)
                         line = json.dumps(event, ensure_ascii=False)
                         out.write(line + "\n")
+                        self.telemetry.emit(event)
                         self.log.emit(line)
                         finished |= event["type"] == "ATTEMPT_RESULT"
                     if events:
                         out.flush()
                         command("ACK", payload={"seq": cursor})
                     if finished:
+                        self.phase.emit("本轮采集结束")
                         self.log.emit("采集结束（仅通信诊断，不判定灵敏度）")
                         break
                     self.stop.wait(0.25)
                 else:
+                    self.phase.emit("用户停止或诊断超时")
                     self.log.emit("用户停止或诊断超时")
             self.log.emit("本地日志: " + str(path))
         except Exception as exc:
+            self.phase.emit("操作失败")
             self.log.emit("错误: " + str(exc))
         finally:
             if owned:
@@ -138,12 +166,81 @@ class UsbDebugPage(QWidget):
         self.stop_button.clicked.connect(self.stop)
         row.addWidget(self.stop_button)
         layout.addLayout(row)
+        self.values = {}
+        for title, fields in (
+            ("设备状态", (("phase", "运行状态"), ("model", "手机型号"),
+                         ("android_version", "Android 版本"), ("app_version", "APP 版本"),
+                         ("ready", "定位就绪"), ("shell_root", "ADB Root"),
+                         ("root", "APP Root"), ("last_error", "手机最近异常"))),
+            ("实时定位", (("ttff_s", "TTFF (s)"), ("used_in_fix", "解算卫星"),
+                         ("latitude", "纬度"), ("longitude", "经度"),
+                         ("satellite_count", "可见信号数"), ("result", "采集结果"))),
+        ):
+            group = QGroupBox(title)
+            grid = QGridLayout(group)
+            for i, (key, caption) in enumerate(fields):
+                value = QLabel("—")
+                value.setWordWrap(True)
+                self.values[key] = value
+                grid.addWidget(QLabel(caption), i // 2, (i % 2) * 2)
+                grid.addWidget(value, i // 2, (i % 2) * 2 + 1)
+            layout.addWidget(group)
+        self.satellites = QTableWidget(0, 4)
+        self.satellites.setHorizontalHeaderLabels(["卫星系统", "编号", "C/N₀ (dB-Hz)", "参与解算"])
+        self.satellites.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.satellites.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.satellites, 2)
+        layout.addWidget(QLabel("通信与运行日志"))
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setMaximumBlockCount(2000)
-        layout.addWidget(self.output)
+        layout.addWidget(self.output, 1)
+        self.device_key = None
+
+    def set_value(self, key, value):
+        self.values[key].setText("—" if value is None else str(value))
+
+    def show_status(self, status):
+        for key in ("model", "android_version", "app_version", "root", "shell_root", "last_error"):
+            if key in status:
+                self.set_value(key, status[key])
+        if "ready" in status:
+            self.set_value("ready", "是" if status["ready"] is True else "否")
+
+    def show_event(self, event):
+        data = event["payload"]
+        kind = event["type"]
+        if kind == "LOCATION_UPDATE" and data.get("mock_location"):
+            return
+        for key in ("latitude", "longitude", "ttff_s", "used_in_fix"):
+            if key in data:
+                value = data[key]
+                if key in ("latitude", "longitude", "ttff_s") and isinstance(value, (int, float)):
+                    value = f"{value:.3f}" if key == "ttff_s" else f"{value:.6f}"
+                self.set_value(key, value)
+        if kind == "SATELLITE_STATUS":
+            satellites = data.get("satellites", [])
+            self.set_value("satellite_count", len(satellites))
+            self.satellites.setRowCount(len(satellites))
+            names = {1: "GPS", 2: "SBAS", 3: "GLONASS", 4: "QZSS", 5: "北斗", 6: "Galileo", 7: "NavIC"}
+            for row, sat in enumerate(satellites):
+                values = (names.get(sat.get("constellation"), "其他"), sat.get("svid"),
+                          sat.get("cn0_db_hz"), "是" if sat.get("used_in_fix") else "否")
+                for col, value in enumerate(values):
+                    self.satellites.setItem(row, col, QTableWidgetItem(str(value)))
+        if kind == "ATTEMPT_RESULT":
+            if "used_in_fix" not in data:
+                self.set_value("used_in_fix", None)
+            self.set_value("result", f"{data.get('status', '')} · {data.get('reason', '')}")
 
     def refresh(self, busy):
+        device = self.window.serial.currentData()
+        key = (device.serial, device.transport_id) if device else None
+        if self.worker is None and key != self.device_key:
+            self.device_key = key
+            for field in self.values:
+                self.set_value(field, None)
+            self.satellites.setRowCount(0)
         for button in self.actions:
             button.setEnabled(not busy and self.worker is None and self.window.serial.currentData() is not None)
         self.stop_button.setEnabled(self.worker is not None)
@@ -159,8 +256,15 @@ class UsbDebugPage(QWidget):
         except LinkError as exc:
             self.output.appendPlainText(str(exc))
             return
+        if action == "collect":
+            for field in ("ttff_s", "used_in_fix", "latitude", "longitude", "satellite_count", "result"):
+                self.set_value(field, None)
+            self.satellites.setRowCount(0)
         self.worker = DebugWorker(usb, self.window.adb, action, self.window.root / "usb-debug")
         self.worker.log.connect(self.output.appendPlainText)
+        self.worker.status.connect(self.show_status)
+        self.worker.telemetry.connect(self.show_event)
+        self.worker.phase.connect(lambda value: self.set_value("phase", value))
         self.worker.finished.connect(self.done)
         self.window.set_busy(False)
         self.worker.start()

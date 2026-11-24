@@ -72,7 +72,16 @@ class AdbTransport(PhoneTransport):
         if self._reader is None:
             raise LinkError("ADB 尚未连接")
         try:
-            return decode(self._reader.readline(MAX_LINE + 1))
+            line = self._reader.readline(MAX_LINE + 1)
+            if not line:
+                raise LinkError("手机关闭连接或采集服务未监听 TCP 18765；请在 APP 点击启动 USB 采集")
+            if len(line) > MAX_LINE:
+                raise LinkError("响应超过 JSONL 帧大小限制")
+            if not line.endswith(b"\n"):
+                raise LinkError("手机响应不完整，缺少换行")
+            return decode(line)
+        except TimeoutError as exc:
+            raise LinkError("手机采集服务响应超时") from exc
         except (OSError, LinkError) as exc:
             raise LinkError(f"USB 通信异常：{self.usb.device.serial} 未返回有效响应（{exc}）") from exc
 
