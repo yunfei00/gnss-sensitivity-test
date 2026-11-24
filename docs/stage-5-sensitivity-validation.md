@@ -23,4 +23,7 @@ SimREPLAYplus V6 的 `-,POW_LEV,v1_a1,...` 参数是**参考 dB**，不是绝对
 6. 检查 JSON/数据库/HTML 报告与实机原始日志一致，确认 CI。
 
 ## 开发状态
-P4/P5 **调度和自动判定核心已实现**。**真实硬件适配、Windows GUI 一键入口、完整端到端实机联调仍未完成**。本文件不将尚未执行的现场测试标记为 PASS。之前的主界面 `TestEngine` 具备 1 dB 扫描与 SQLite/HTML 报告逻辑，但目前现场模式仍通过 `SimReplayPlusManual` 和 `Cmw500Manual` 人工确认；两套入口尚未整合，禁止混淆。
+P4/P5 **调度和自动判定核心已实现**。**真实硬件自动适配、完整端到端实机联调仍未完成**。本文件不将尚未执行的现场测试标记为 PASS。之前的主界面 `TestEngine` 具备 1 dB 扫描与 SQLite/HTML 报告逻辑，但目前现场模式仍通过 `SimReplayPlusManual` 和 `Cmw500Manual` 人工确认；两套入口尚未整合，禁止混淆。
+
+## Windows 上位机入口
+主界面新增 **P4 / P5 联合测试** 页：P4 按钮将测试配置设为 -120 dBm 单档 20 次；P5 按钮沿用“测试配置”的最低功率和档数启动已有 `TestEngine`，写入 SQLite/CSV/JSON/HTML 报告。**该页面目前使用旧的人工确认仪表适配器**，并非调用 `stage4_fixed.py` / `stage5_sweep.py` 的自动化驱动。两套实现必须在实机适配完成后统一；不能把人工确认流程标成全自动。
