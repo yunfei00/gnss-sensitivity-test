@@ -1,9 +1,10 @@
 """Independent GSS7000 remote command workbench."""
 from datetime import datetime
+from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QSettings
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QComboBox, QPushButton, QLabel, QPlainTextEdit, QMessageBox, QDoubleSpinBox)
-from .gss_remote import exchange, render_command, describe_response, XML_END
+from .gss_remote import exchange, render_command, describe_response, XML_END, run_operation
 
 OPERATIONS = (("identify", "型号 / 版本"), ("state", "查询状态"),
               ("current", "当前场景"), ("scenario", "加载场景"), ("trigger", "软件触发模式"), ("start", "启动场景"), ("stop", "停止场景"),
@@ -21,12 +22,16 @@ class Probe(QThread):
         self.args = args
     def run(self):
         try:
+            if len(self.args) == 6:
+                state, data = run_operation(*self.args[:5], self.result.emit)
+                self.result.emit("PASS: " + str(state) + " " + data)
+                return
             raw = exchange(*self.args)
             self.result.emit("响应: " + raw)
             if self.args[4] == XML_END:
                 self.result.emit(describe_response(raw))
         except Exception as exc:
-            self.result.emit("异常（执行状态未知）: " + str(exc))
+            self.result.emit("FAIL / 未验证（执行状态可能未知）: " + str(exc))
 
 
 class GssDebugPage(QWidget):
@@ -77,11 +82,64 @@ class GssDebugPage(QWidget):
         self.raw_send.clicked.connect(lambda: self.submit(self.raw.text()))
         row.addWidget(self.raw_send)
         layout.addLayout(row)
+        for entries in ((("连接 / 状态", "state"), ("仪表信息", "identify"), ("当前场景", "current")), (("加载场景", "scenario"), ("启动场景", "start"), ("停止并复位", "stop")), (("设置 GPS 参考功率", "power"), ("读取 GPS 参考功率", "read_power"))):
+            buttons = QHBoxLayout()
+            for title, key in entries:
+                button = QPushButton(title)
+                button.clicked.connect(lambda checked=False, k=key: self.quick(k))
+                buttons.addWidget(button)
+            layout.addLayout(buttons)
+        self.scenario_path = QLineEdit()
+        self.scenario_path.setPlaceholderText("仪表上的场景完整路径")
+        layout.addWidget(self.scenario_path)
+        self.power = QDoubleSpinBox()
+        self.power.setRange(-200, 100)
+        self.power.setSuffix(" dB (参考值，非 dBm)")
+        layout.addWidget(self.power)
+        self.svid = QLineEdit("23")
+        self.svid.setPlaceholderText("场景中实际启用的 GPS SVID")
+        layout.addWidget(self.svid)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setMaximumBlockCount(2000)
         layout.addWidget(self.output, 1)
         self.load_template()
+
+    def quick(self, key):
+        if self.worker is not None or self.window.worker is not None:
+            return
+        try:
+            host, port = self.host.text().strip(), int(self.port.text())
+            if not host or not 1 <= port <= 65535:
+                raise ValueError("无效地址或端口")
+            commands = [DEFAULTS[key]] if key != "read_power" else []
+            expected = None
+            if key == "scenario":
+                path = self.scenario_path.text().strip()
+                if not path or any(c in path for c in '\\r\\n"'):
+                    raise ValueError("请输入有效的仪表场景路径")
+                commands = ['SC,"' + path + '"']
+                expected = 2
+            elif key == "start":
+                commands, expected = ["TR,0", "RU"], 5
+            elif key == "stop":
+                expected = 2
+            elif key == "power":
+                commands = [render_command(DEFAULTS[key], self.power.value())]
+            elif key == "read_power":
+                svid = int(self.svid.text())
+                if not 1 <= svid <= 32:
+                    raise ValueError("GPS SVID 必须为 1–32")
+                commands = [f"-,SIG_LEVEL,V1_A1,GPS,{svid},0"]
+            if key in ("scenario", "start", "stop", "power") and QMessageBox.question(self, "确认操作", "确认屏蔽环境、场景及功率单位后执行？") != QMessageBox.StandardButton.Yes:
+                return
+            self.worker = Probe((host, port, ENDS[self.tx.currentText()], commands, expected, True))
+            self.worker.result.connect(self.append)
+            self.worker.finished.connect(self.done)
+            self.window.set_busy(False)
+            self.worker.start()
+        except Exception as exc:
+            self.append("FAIL: " + str(exc))
 
     def load_template(self):
         self.template.setText(str(self.settings.value("commands/" + self.operation.currentData(), "") or DEFAULTS.get(self.operation.currentData(), "")))
@@ -109,7 +167,15 @@ class GssDebugPage(QWidget):
             self.append(str(exc))
 
     def append(self, message):
-        self.output.appendPlainText(datetime.now().isoformat(timespec="seconds") + " " + message)
+        line = datetime.now().isoformat(timespec="seconds") + " " + message
+        self.output.appendPlainText(line)
+        try:
+            path = Path("results/gss-debug/commands.log")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(line + "\n")
+        except OSError as exc:
+            self.output.appendPlainText("日志保存失败: " + str(exc))
 
     def refresh(self, busy):
         self.setEnabled(not busy and self.worker is None)

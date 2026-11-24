@@ -60,3 +60,32 @@ def render_command(template, value=None):
     if template.count("{value}") != 1:
         raise DeviceError("设置指令须包含一个 {value}")
     return template.replace("{value}", str(value))
+
+
+def checked_response(raw):
+    description = describe_response(raw)
+    root = ET.fromstring(raw)
+    status = int(root.findtext("status"))
+    if status & 48 or any((root.findtext(k) or "").strip() for k in ("error", "fatal")):
+        raise DeviceError(description)
+    return status & 15, (root.findtext("data") or "").strip()
+
+
+def run_operation(host, port, tx_end, commands, expected, emit, timeout=120):
+    from time import monotonic, sleep
+    def send(command):
+        emit("发送: " + command)
+        raw = exchange(host, port, command, tx_end, XML_END)
+        emit("响应: " + raw)
+        emit(describe_response(raw))
+        return checked_response(raw)
+    for command in commands:
+        state, data = send(command)
+    if expected is not None:
+        deadline = monotonic() + timeout
+        while state != expected:
+            if monotonic() >= deadline:
+                raise DeviceError("状态未达到预期；请检查仪表，不自动重发控制命令")
+            sleep(1)
+            state, data = send("NULL")
+    return state, data
