@@ -123,14 +123,15 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
         record["success_rate"] = record["passed"] / SAMPLES
         record["status"] = "FINISHED"
         record["verdict"] = "PASS" if record["passed"] >= PASS_COUNT else "FAIL"
-    except BaseException as exc:
+    except (Exception, UserStop) as exc:
         record["status"] = "STOPPED" if isinstance(exc, UserStop) else "PAUSED"
         record["reason"] = str(exc)
     finally:
         issues = []
         for name, device in reversed(touched):
             try:
-                if device.safe_stop() is not True if name != "phone" else device.stop_run() is not True:
+                confirmed = device.stop_run() if name == "phone" else device.safe_stop()
+                if confirmed is not True:
                     raise DeviceError("安全停止未确认")
             except Exception as exc:
                 issues.append(name + ": " + str(exc))
@@ -138,6 +139,8 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
             record["status"] = "PAUSED"
             record.pop("verdict", None)
             record["shutdown_issues"] = issues
+        if record["status"] != "FINISHED":
+            record.pop("verdict", None)
         record["finished_utc"] = _now()
         _persist(output, record)
         notify("DONE", record)
