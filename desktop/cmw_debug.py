@@ -27,6 +27,10 @@ class Worker(QThread):
                     self.result.emit("cell",cmw.cell())
                 elif op=="cell":
                     self.result.emit("cell",cmw.cell())
+                elif op=="rrc":
+                    self.result.emit("rrc",cmw.rrc())
+                elif op=="attach":
+                    self.result.emit("rrc",cmw.wait_connected())
                 elif op=="switch":
                     self.result.emit("cell",cmw.switch(value))
                 elif op=="set":
@@ -61,7 +65,7 @@ class CmwDebugPage(QWidget):
         self.port.setMaximumWidth(85)
         row("IP / 主机",self.host,"Socket 端口",self.port,button("连接 / 仪表信息","identity"))
         self.fields={}
-        self.status=QLabel("小区状态：未知；手机注册：尚未远程验证")
+        self.status=QLabel("小区状态：未知；NAS 注册：尚未独立验证")
         row(button("读取全部配置","all"),button("查询小区","cell"),button("启动小区","switch",value="ON"),button("停止小区","switch",value="OFF"))
         for key,title in (("duplex","双工 FDD/TDD"),("band","Band (OBn)"),("channel","DL EARFCN"),("bandwidth","带宽 (Bxxx)"),("power","RS EPRE dBm"),("route","RF 路由")):
             edit=QLineEdit()
@@ -71,6 +75,9 @@ class CmwDebugPage(QWidget):
                 row(title,edit,button("读取","read",key))
             else:
                 row(title,edit,button("读取","read",key),button("设置","set",key))
+        row(button("查询 RRC","rrc"),button("等待手机连接","attach"))
+        self.rrc_status=QLabel("RRC：未知（不等同 NAS 注册）")
+        layout.addWidget(self.rrc_status)
         layout.addWidget(self.status)
         self.raw=QLineEdit()
         self.raw.setPlaceholderText("已核对的 SCPI 查询（注册命令待确认）")
@@ -85,6 +92,7 @@ class CmwDebugPage(QWidget):
         self.settings.setValue("host",self.host.text())
         self.settings.setValue("port",self.port.text())
         self.settings.sync()
+        self.rrc_status.setText("RRC：未知")
         self.status.setText("小区状态：未知；手机注册：尚未远程验证")
     def append(self,message):
         line=datetime.now().isoformat(timespec="seconds")+" "+message
@@ -97,7 +105,9 @@ class CmwDebugPage(QWidget):
         except OSError as exc:
             self.output.appendPlainText(str(exc))
     def show_result(self,key,value):
-        if key=="cell":
+        if key=="rrc":
+            self.rrc_status.setText("RRC："+value+("（已连接）" if value=="CONN" else "（未确认连接）"))
+        elif key=="cell":
             self.status.setText("小区状态："+value+"；手机注册：尚未远程验证")
         else:
             self.fields[key].setText(value)
