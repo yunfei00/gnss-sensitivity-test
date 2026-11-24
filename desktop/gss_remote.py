@@ -1,14 +1,32 @@
 """Configurable TCP command probe. No assumed SimREPLAYplus command dialect."""
 import socket
+import xml.etree.ElementTree as ET
+
+XML_END = b'</msg>'
+STATES = {0: '未加载', 1: '加载中', 2: '就绪', 3: '准备中', 4: '已准备', 5: '运行中', 7: '已结束'}
+
+
+def describe_response(raw):
+    root = ET.fromstring(raw)
+    if root.tag != 'msg' or root.find('status') is None:
+        raise DeviceError('无效仪器 XML 响应')
+    status = int(root.findtext('status'))
+    if not 0 <= status <= 255:
+        raise DeviceError('无效状态码')
+    error = root.findtext('error') or root.findtext('fatal') or ''
+    flags = status & 48
+    state = STATES.get(status & 15, '未知状态')
+    return f'{state} (status={status})' + (f'；仪器异常: {error or flags}' if error or flags else '；已收到响应，仍需验证执行结果')
+
 from .core import DeviceError
 
 
-def exchange(host, port, command, tx_end, rx_end, timeout=3):
+def exchange(host, port, command, tx_end, rx_end, timeout=30):
     if not command.strip() or "\r" in command or "\n" in command:
         raise DeviceError("请输入单条仪器指令")
     if not 1 <= port <= 65535 or not host.strip():
         raise DeviceError("请输入有效地址和端口")
-    if tx_end not in (b"", b"\n", b"\r", b"\r\n") or rx_end not in (b"", b"\n", b"\r", b"\r\n"):
+    if tx_end not in (b"", b"\n", b"\r", b"\r\n") or rx_end not in (b"", b"\n", b"\r", b"\r\n", XML_END):
         raise DeviceError("无效结束符")
     with socket.create_connection((host, port), timeout=timeout) as sock:
         sock.settimeout(timeout)
@@ -28,7 +46,7 @@ def exchange(host, port, command, tx_end, rx_end, timeout=3):
                 raise DeviceError("连接关闭，未收到完整响应")
             data.extend(chunk)
             if rx_end in data:
-                return data.decode("utf-8", errors="replace")
+                return bytes(data[:data.index(rx_end)+len(rx_end)]).decode("utf-8", errors="replace")
         raise DeviceError("响应超过 64 KiB")
 
 
