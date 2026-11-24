@@ -4,11 +4,12 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QSettings
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QComboBox, QPushButton, QLabel, QPlainTextEdit, QMessageBox, QDoubleSpinBox)
+from .gss_versions import DIALECTS
 from .gss_remote import exchange, render_command, describe_response, XML_END, run_operation
 
 OPERATIONS = (("identify", "型号 / 版本"), ("state", "查询状态"),
               ("current", "当前场景"), ("scenario", "加载场景"), ("trigger", "软件触发模式"), ("start", "启动场景"), ("stop", "停止场景"),
-              ("power", "设置 GPS 功率（参考 dB）"), ("read_power", "读取功率"))
+              ("power", "设置 GPS 功率（参考 dB）"), ("read_power", "读取功率"), ("time", "查询场景时间"))
 DEFAULTS = {"identify": "*IDN?", "state": "NULL", "current": "SC_NAME",
             "scenario": "SC,{value}", "trigger": "TR,0", "start": "RU", "stop": "-,EN,1",
             "power": "-,POW_LEV,v1,{value},GPS,23,0,0,1,1,1,1"}
@@ -17,6 +18,7 @@ ENDS = {"LF": b"\n", "CRLF": b"\r\n", "CR": b"\r", "无": b""}
 
 class Probe(QThread):
     result = Signal(str)
+    success = Signal(int, str)
     def __init__(self, args):
         super().__init__()
         self.args = args
@@ -24,6 +26,7 @@ class Probe(QThread):
         try:
             if len(self.args) == 6:
                 state, data = run_operation(*self.args[:5], self.result.emit)
+                self.success.emit(state, data)
                 self.result.emit("PASS: " + str(state) + " " + data)
                 return
             raw = exchange(*self.args)
@@ -52,6 +55,10 @@ class GssDebugPage(QWidget):
         self.rx.setCurrentIndex(0)
         self.tx.setCurrentText(str(self.settings.value("tx", "LF")))
         self.rx.setCurrentText(str(self.settings.value("rx", "XML")))
+        self.version = QComboBox()
+        self.version.addItems(list(DIALECTS))
+        self.version.setCurrentText(str(self.settings.value("version", "6.00.02")))
+        form.addRow("SimREPLAYplus 版本（手动确认）", self.version)
         form.addRow("仪器 IP / 主机", self.host)
         form.addRow("远控端口", self.port)
         form.addRow("发送结束符", self.tx)
@@ -82,11 +89,13 @@ class GssDebugPage(QWidget):
         self.raw_send.clicked.connect(lambda: self.submit(self.raw.text()))
         row.addWidget(self.raw_send)
         layout.addLayout(row)
-        for entries in ((("连接 / 状态", "state"), ("仪表信息", "identify"), ("当前场景", "current")), (("加载场景", "scenario"), ("启动场景", "start"), ("停止并复位", "stop")), (("设置 GPS 参考功率", "power"), ("读取 GPS 参考功率", "read_power"))):
+        self.quick_buttons = {}
+        for entries in ((("连接 / 状态", "state"), ("仪表信息", "identify"), ("当前场景", "current")), (("加载场景", "scenario"), ("启动场景", "start"), ("停止并复位", "stop")), (("设置 GPS 参考功率", "power"), ("读取 GPS 参考功率", "read_power"), ("查询场景时间", "time"))):
             buttons = QHBoxLayout()
             for title, key in entries:
                 button = QPushButton(title)
                 button.clicked.connect(lambda checked=False, k=key: self.quick(k))
+                self.quick_buttons[key] = button
                 buttons.addWidget(button)
             layout.addLayout(buttons)
         self.scenario_path = QLineEdit()
@@ -99,10 +108,25 @@ class GssDebugPage(QWidget):
         self.svid = QLineEdit("23")
         self.svid.setPlaceholderText("场景中实际启用的 GPS SVID")
         layout.addWidget(self.svid)
+        self.power_status = QLabel("已确认设置值：未知（非仪表读回）")
+        layout.addWidget(self.power_status)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setMaximumBlockCount(2000)
         layout.addWidget(self.output, 1)
+        self.version.currentTextChanged.connect(self.version_changed)
+        self.host.textChanged.connect(self.invalidate_power)
+        self.port.textChanged.connect(self.invalidate_power)
+        self.tx.currentTextChanged.connect(self.invalidate_power)
+        self.version_changed()
+
+    def invalidate_power(self, *_):
+        self.power_status.setText("已确认设置值：未知（非仪表读回）")
+
+    def version_changed(self, *_):
+        self.settings.setValue("version", self.version.currentText())
+        self.invalidate_power()
+        self.quick_buttons["read_power"].setEnabled(DIALECTS[self.version.currentText()].read_power)
         self.load_template()
 
     def quick(self, key):
@@ -112,7 +136,8 @@ class GssDebugPage(QWidget):
             host, port = self.host.text().strip(), int(self.port.text())
             if not host or not 1 <= port <= 65535:
                 raise ValueError("无效地址或端口")
-            commands = [DEFAULTS[key]] if key != "read_power" else []
+            dialect = DIALECTS[self.version.currentText()]
+            commands = [DEFAULTS[key]] if key not in ("read_power", "time") else []
             expected = None
             if key == "scenario":
                 path = self.scenario_path.text().strip()
@@ -128,12 +153,17 @@ class GssDebugPage(QWidget):
                 commands = [render_command(DEFAULTS[key], self.power.value())]
             elif key == "read_power":
                 svid = int(self.svid.text())
-                if not 1 <= svid <= 32:
-                    raise ValueError("GPS SVID 必须为 1–32")
-                commands = [f"-,SIG_LEVEL,V1_A1,GPS,{svid},0"]
+                commands = [dialect.power_query(svid)]
+            elif key == "time":
+                commands = [dialect.time_command]
             if key in ("scenario", "start", "stop", "power") and QMessageBox.question(self, "确认操作", "确认屏蔽环境、场景及功率单位后执行？") != QMessageBox.StandardButton.Yes:
                 return
+            self.invalidate_power()
+            self.append("版本: " + dialect.version)
             self.worker = Probe((host, port, ENDS[self.tx.currentText()], commands, expected, True))
+            if key == "power":
+                value = self.power.value()
+                self.worker.success.connect(lambda state, data: self.power_status.setText(f"已确认设置值：{value:g} dB（非仪表读回）"))
             self.worker.result.connect(self.append)
             self.worker.finished.connect(self.done)
             self.window.set_busy(False)
@@ -142,10 +172,15 @@ class GssDebugPage(QWidget):
             self.append("FAIL: " + str(exc))
 
     def load_template(self):
-        self.template.setText(str(self.settings.value("commands/" + self.operation.currentData(), "") or DEFAULTS.get(self.operation.currentData(), "")))
+        key = self.operation.currentData()
+        dialect = DIALECTS[self.version.currentText()]
+        default = dialect.time_command if key == "time" else DEFAULTS.get(key, "")
+        if key == "read_power":
+            default = dialect.power_query(23) if dialect.read_power else ""
+        self.template.setText(str(self.settings.value("commands/" + dialect.version + "/" + key, "") or default))
 
     def save_template(self):
-        self.settings.setValue("commands/" + self.operation.currentData(), self.template.text())
+        self.settings.setValue("commands/" + self.version.currentText() + "/" + self.operation.currentData(), self.template.text())
         self.settings.setValue("host", self.host.text())
         self.settings.setValue("port", self.port.text())
         self.settings.setValue("tx", self.tx.currentText())
@@ -155,6 +190,8 @@ class GssDebugPage(QWidget):
     def execute(self):
         try:
             key = self.operation.currentData()
+            if key == "read_power" and not DIALECTS[self.version.currentText()].read_power:
+                raise ValueError("该版本不支持远程功率读回")
             value = self.value.text().strip() if key in ("scenario", "power") else None
             if value == "":
                 raise ValueError("参数不能为空")
@@ -196,6 +233,7 @@ class GssDebugPage(QWidget):
         if QMessageBox.question(self, "确认仪器操作",
                 "请确认 RF 屏蔽、指令含义及参数单位。\n发送: " + command) != QMessageBox.StandardButton.Yes:
             return
+        self.invalidate_power()
         self.append("发送: " + command)
         self.worker = Probe((self.host.text().strip(), port, command,
                              ENDS[self.tx.currentText()], XML_END if self.rx.currentText() == "XML" else ENDS[self.rx.currentText()]))
