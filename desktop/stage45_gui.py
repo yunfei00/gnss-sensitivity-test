@@ -63,7 +63,7 @@ class Stage45Worker(QThread):
                 return UsbGnssAdapter(self.usb, self.adb,
                     self.directory / f"phone_audit_{count[0]}.sqlite",
                     None, self.log.emit, self.stop)
-            notify = lambda event, data: self.log.emit(event + ": " + str(data))
+            notify = lambda event, data: self.log.emit(event + ": " + str(data))\n            self.log.emit("测试模式: " + v["test_mode"])
             if self.mode == "P4":
                 plan = FixedPowerPlan(-120.0, float(v["lat"]), float(v["lon"]),
                                       v["scenario"], v["calibration"])
@@ -96,7 +96,7 @@ class Stage45Page(QWidget):
                         "GNSS-Sensitivity", "CMW500")
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
-        layout.addWidget(QLabel("P4：-120 dBm 固定功率 20 次；P5：-120 dBm 起逐档 -1 dB，首次失败停止。"))
+        layout.addWidget(QLabel("一期基线：GSS7000 + Android USB；P4 固定 20 次，P5 每档 -1 dB。"))\n        mode_row = QHBoxLayout()\n        mode_row.addWidget(QLabel("测试模式"))\n        self.test_mode = QComboBox()\n        self.test_mode.addItem("GNSS 独立模式（一期默认，无需 CMW500）", "GNSS_ONLY")\n        self.test_mode.addItem("GNSS + LTE 联合模式（CMW500 自动控制）", "GNSS_LTE")\n        mode_index = self.test_mode.findData(str(self.settings.value("test_mode", "GNSS_ONLY")))\n        self.test_mode.setCurrentIndex(max(0, mode_index))\n        self.test_mode.currentIndexChanged.connect(self.save)\n        self.test_mode.currentIndexChanged.connect(self.update_mode)\n        mode_row.addWidget(self.test_mode, 1)\n        layout.addLayout(mode_row)
         form = QGridLayout()
         form.setHorizontalSpacing(8)
         form.setVerticalSpacing(5)
@@ -148,17 +148,17 @@ class Stage45Page(QWidget):
         for button in (self.p4, self.p5, self.cancel, self.open_report):
             buttons.addWidget(button)
         layout.addLayout(buttons)
-        self.status = QLabel("待开始；需先核对屏蔽环境、NAS 注册及校准证据")
+        self.status = QLabel("待开始；需核对屏蔽环境与校准证据。LTE 联合模式另需 NAS 注册。")
         layout.addWidget(self.status)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setMaximumBlockCount(4000)
-        layout.addWidget(self.output, 1)
+        layout.addWidget(self.output, 1)\n        self.update_mode()
 
-    def save(self, *_):
+    def update_mode(self, *_):\n        enabled = self.test_mode.currentData() == "GNSS_LTE"\n        self.fields["cmw_host"].setEnabled(enabled and self.worker is None)\n        self.fields["cmw_port"].setEnabled(enabled and self.worker is None)\n\n    def save(self, *_):
         for key, edit in self.fields.items():
             self.settings.setValue(key, edit.text())
-        self.settings.setValue("version", self.version.currentText())
+        self.settings.setValue("version", self.version.currentText())\n        self.settings.setValue("test_mode", self.test_mode.currentData())
         self.settings.sync()
 
     def append(self, message):
@@ -182,12 +182,12 @@ class Stage45Page(QWidget):
             self.append("FAIL: 请先选择在线 USB 手机")
             return
         v = {k: field.text().strip() for k, field in self.fields.items()}
-        v["version"] = self.version.currentText()
+        v["version"] = self.version.currentText()\n        v["test_mode"] = self.test_mode.currentData()
         try:
-            for key in ("gss_host", "cmw_host", "scenario", "calibration", "plane"):
+            required = ("gss_host", "scenario", "calibration", "plane")\n            if v["test_mode"] == "GNSS_LTE":\n                required += ("cmw_host",)\n            for key in required:
                 if not v[key]:
                     raise ValueError(key + " 不能为空")
-            for key in ("gss_port", "cmw_port"):
+            for key in (("gss_port", "cmw_port") if v["test_mode"] == "GNSS_LTE" else ("gss_port",)):
                 if not 1 <= int(v[key]) <= 65535:
                     raise ValueError(key + " 端口无效")
             calibration = GssCalibration(v["version"], float(v["measured"]),
@@ -260,4 +260,4 @@ class Stage45Page(QWidget):
         self.cancel.setEnabled(running)
         for edit in self.fields.values():
             edit.setEnabled(not busy and not running)
-        self.version.setEnabled(not busy and not running)
+        self.version.setEnabled(not busy and not running)\n        self.test_mode.setEnabled(not busy and not running)\n        if not busy and not running:\n            self.update_mode()
