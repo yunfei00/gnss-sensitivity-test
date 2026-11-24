@@ -64,7 +64,7 @@ class GssCalibratedAdapter:
 
     def preflight(self):
         state, _ = self._run(["NULL"])
-        if state not in (2, 5, 7):
+        if state not in (0, 2, 4, 5, 7):
             raise DeviceError("GSS7000 尚未加载就绪场景")
 
     def start_scenario(self, scenario_id):
@@ -72,7 +72,9 @@ class GssCalibratedAdapter:
             raise DeviceError("场景路径无效")
         # Stop a previous run and load the exact scenario supplied by operator.
         self.owned = True
-        self._run(["-,EN,1"], 2)
+        state, _ = self._run(["NULL"])
+        if state in (4, 5, 7):
+            self._run(["-,EN,1"], 2)
         self._run(['SC,"' + scenario_id + '"'], 2)
         self._run(["TR,0", "RU"], 5)
 
