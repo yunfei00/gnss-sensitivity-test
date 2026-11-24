@@ -6,7 +6,7 @@
 - 输出 `sweep.json` 和 `level_-120.json` 等文件；不覆盖已有运行。每档独立预检/启动/停止，避免前一档残留状态被误当作当前档。
 - `tests/test_stage4_fixed.py`、`tests/test_stage5_sweep.py`：无硬件合成适配器回归，仅用于软件逻辑，不代表现场通过。
 
-## 三类设备接口（需要接入现场真实适配器）
+## 三类设备接口（已提供实机适配器，待现场验收）
 - CMW500：`preflight()`、`establish_lte()`、`rrc_connected()`、`safe_stop()`。**RRC CONN 不能替代 NAS 注册证据**，现场须核对 LTE 小区和真实 DUT。
 - GSS7000：`preflight()`、`start_scenario(scenario_id)`、`set_power_dbm(dbm)`、`verify_power_dbm(dbm)`、`safe_stop()`。只有实际 RF 参考平面校准成立且确认后，`verify_power_dbm` 才允许返回 True。
 - Android USB：`preflight()`、`prepare(startup_mode)`、`attempt(reference, observation_s)`、`stop_run()`。必须返回真实的 `ATTEMPT_RESULT` 原始遥测字段，不能返回自行构造的 PASS；必须沿用 JSONL 协议、消息 ID/ACK/重放校验。每轮 HOT/COLD/AGPS 准备证据必须真实。
