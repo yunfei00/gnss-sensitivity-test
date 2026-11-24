@@ -428,17 +428,17 @@ class MainWindow(QMainWindow):
         selection = self.selected()
         real_history = selection is not None and not selection[1]["config"]["mock"]
         debugging = hasattr(self, 'debug_page') and self.debug_page.worker is not None
-        self.serial.setEnabled(not busy and not debugging and (not self.mock_mode or real_history or (hasattr(self, 'debug_page') and self.tabs.currentWidget() is self.debug_page)) and self.serial.count() > 0)
-        if hasattr(self, 'debug_page'):
-            self.debug_page.refresh(busy)
         gss_busy = hasattr(self, 'gss_page') and self.gss_page.worker is not None
+        self.serial.setEnabled(not busy and not debugging and not gss_busy and (not self.mock_mode or real_history or (hasattr(self, 'debug_page') and self.tabs.currentWidget() is self.debug_page)) and self.serial.count() > 0)
+        if hasattr(self, 'debug_page'):
+            self.debug_page.refresh(busy or gss_busy)
         if hasattr(self, 'gss_page'):
-            self.gss_page.refresh(busy)
+            self.gss_page.refresh(busy or debugging)
         busy = busy or debugging or gss_busy
         self.search_usb.setEnabled(not busy)
         self.manual_usb.setEnabled(not busy)
         self.start.setEnabled(not busy and (self.mock_mode or self.serial.currentData() is not None))
-        self.stop.setEnabled(busy and not self.stop_signal.is_set())
+        self.stop.setEnabled((self.worker is not None and not self.stop_signal.is_set()) or debugging)
         self.resume.setEnabled(not busy and selection is not None and self.resume_allowed(selection[1]))
         recorded = selection[1]["evidence"].get("usb_serial") if real_history else None
         self.resume.setToolTip(f"选择原 USB 设备 {recorded} 后点击恢复" if recorded else "")

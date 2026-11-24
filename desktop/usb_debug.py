@@ -123,7 +123,7 @@ class DebugWorker(QThread):
                         out.flush()
                         command("ACK", payload={"seq": cursor})
                     if finished:
-                        self.phase.emit("本轮采集结束")
+                        self.phase.emit("本轮采集结束，正在清理")
                         self.log.emit("采集结束（仅通信诊断，不判定灵敏度）")
                         break
                     self.stop.wait(0.25)
@@ -140,8 +140,9 @@ class DebugWorker(QThread):
                     command("STOP_RUN")
                     if command("GET_STATUS").get("active_attempt") is not None:
                         raise LinkError("采集仍活动")
-                    self.log.emit("已确认采集停止")
+                    self.log.emit("已确认采集停止，手机服务保留")
                 except Exception as exc:
+                    self.phase.emit("停止未确认，请检查手机")
                     self.log.emit("停止未确认，请检查手机: " + str(exc))
             transport.disconnect()
 
@@ -231,7 +232,9 @@ class UsbDebugPage(QWidget):
         if kind == "ATTEMPT_RESULT":
             if "used_in_fix" not in data:
                 self.set_value("used_in_fix", None)
-            self.set_value("result", f"{data.get('status', '')} · {data.get('reason', '')}")
+            status, reason = data.get("status"), data.get("reason")
+            result = {"OBSERVED": "定位成功", "FAIL": "定位失败", "INVALID": "本轮无效"}.get(status, "未知结果")
+            self.set_value("result", f"{result} · {reason or '未知原因'}")
 
     def refresh(self, busy):
         device = self.window.serial.currentData()
@@ -247,6 +250,8 @@ class UsbDebugPage(QWidget):
 
     def begin(self, action):
         if self.worker is not None or self.window.worker is not None:
+            return
+        if getattr(self.window, "gss_page", None) and self.window.gss_page.worker is not None:
             return
         try:
             device = self.window.serial.currentData()
@@ -276,6 +281,11 @@ class UsbDebugPage(QWidget):
     def done(self):
         worker, self.worker = self.worker, None
         worker.deleteLater()
-        self.window.update_usb(self.window.adb_monitor.release())
+        snapshot = self.window.adb_monitor.release()
+        self.window.update_usb(snapshot)
+        self.window.set_busy(self.window.worker is not None)
+        self.refresh(self.window.worker is not None)
+        if self.window.serial.currentData() is not None:
+            self.output.appendPlainText("本轮操作已释放，可再次点击启动定位采集（无需重启手机服务）")
         if self.window.closing:
             self.window.close()

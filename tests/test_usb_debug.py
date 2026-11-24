@@ -40,3 +40,27 @@ def test_root_unavailable_is_not_transport_failure(monkeypatch):
         return "uid=2000(shell)"
     monkeypatch.setattr("desktop.usb_debug.run_adb", command)
     assert "未确认 Root" in probe_root("adb", "A")[0]
+
+
+def test_debug_page_releases_and_reenables_actions(tmp_path):
+    from PySide6.QtWidgets import QApplication, QComboBox
+    from desktop.usb_debug import UsbDebugPage
+    from desktop.adb import AdbDevice, AdbSnapshot
+    from types import SimpleNamespace
+    app = QApplication.instance() or QApplication([])
+    serial = QComboBox()
+    device = AdbDevice("A", 1)
+    serial.addItem("A", device)
+    snapshot = AdbSnapshot((device,))
+    window = SimpleNamespace(serial=serial, worker=None, closing=False,
+        adb_monitor=SimpleNamespace(release=lambda: snapshot),
+        update_usb=lambda snapshot: None, set_busy=lambda busy: None)
+    page = UsbDebugPage(window)
+    for _ in range(2):
+        page.worker = SimpleNamespace(deleteLater=lambda: None)
+        page.refresh(False)
+        assert not page.actions[-1].isEnabled()
+        page.done()
+        assert page.worker is None
+        assert page.actions[-1].isEnabled()
+        assert not page.stop_button.isEnabled()
