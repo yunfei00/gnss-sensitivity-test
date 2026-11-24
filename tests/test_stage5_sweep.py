@@ -60,3 +60,14 @@ def test_p5_prevents_overwriting_existing_runs(tmp_path):
     with pytest.raises(FileExistsError):
         run_sensitivity_sweep(plan(), Cmw, Gss, Phone, folder)
     assert (folder/"keep.txt").read_text() == "do not delete"
+
+
+def test_gnss_only_sweep_without_cmw(tmp_path):
+    result = run_sensitivity_sweep(plan(), None, Gss, Phone, tmp_path / "gnss")
+    assert result["status"] == "FINISHED"
+    assert result["threshold_dbm"] == -122
+    assert [x["power_dbm"] for x in result["levels"]] == [-120, -121, -122]
+    assert all(x["passed"] == 20 for x in result["levels"])
+    import json
+    assert all(json.loads((tmp_path / "gnss" / x["file"]).read_text())["test_mode"] == "GNSS_ONLY"
+               for x in result["levels"])
