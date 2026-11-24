@@ -73,13 +73,22 @@ class CmwSession:
     def cell(self):
         return self.read(CELL+":STATe?").split(",")[0].strip().upper()
     def switch(self, target):
-        self.write(CELL+" "+target)
+        self.write(CELL+":STATe "+target)
         deadline = monotonic()+30
         while monotonic()<deadline:
             if self.cell()==target:
                 return target
             sleep(0.5)
         raise DeviceError("小区状态未达到 "+target)
+    def rrc(self):
+        return self.read("SENSe:LTE:SIGN:RRCState?").strip().upper()
+    def wait_connected(self):
+        deadline = monotonic()+30
+        while monotonic()<deadline:
+            if self.rrc()=="CONN":
+                return "CONN"
+            sleep(0.2)
+        raise DeviceError("等待 RRC CONN 超时")
     def configure(self, key, value):
         value = validate(key,value)
         if key != "power" and self.cell()!="OFF":
