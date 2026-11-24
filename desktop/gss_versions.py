@@ -7,6 +7,11 @@ class Dialect:
     version: str
     time_command: str
     read_power: bool
+    power_object: str
+
+    @property
+    def power_template(self):
+        return f"-,POW_LEV,{self.power_object},{{value}},GPS,23,0,0,1,1,1,1"
 
     def power_query(self, svid):
         if not self.read_power:
@@ -16,6 +21,6 @@ class Dialect:
         return f"-,SIG_LEVEL,V1_A1,GPS,{svid},0"
 
 DIALECTS = {
-    "6.00.02": Dialect("6.00.02", "-,TIME", False),
-    "10.02.00": Dialect("10.02.00", "TIME", True),
+    "6.00.02": Dialect("6.00.02", "-,TIME", False, "v1_a1"),
+    "10.02.00": Dialect("10.02.00", "TIME", True, "v1"),
 }
