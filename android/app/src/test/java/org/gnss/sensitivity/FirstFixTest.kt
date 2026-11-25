@@ -24,7 +24,7 @@ class FirstFixTest {
         val before = SatelliteSnapshot(140, setOf(1 to 2, 1 to 3))
         val after = before.copy(receivedNs = 155)
         assertNull(selector.associate(listOf(before), 20))
-        assertNull(selector.associate(listOf(before, after), 9))
+        assertEquals(after, selector.associate(listOf(before, after), 9))
         assertEquals(after.copy(used = setOf(1 to 2, 1 to 8)),
             selector.associate(listOf(before, after.copy(used = setOf(1 to 2, 1 to 8))), 20))
         assertEquals(after, selector.associate(listOf(before, after), 20))
