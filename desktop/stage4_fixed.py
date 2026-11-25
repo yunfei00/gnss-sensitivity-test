@@ -53,7 +53,8 @@ def _persist(path, record):
 def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
     """Run against verified adapters.
 
-    cmw: optional; None means GNSS_ONLY and skips all LTE operations.\n         Otherwise preflight(), establish_lte(), rrc_connected(), safe_stop()
+    cmw: optional; None means GNSS_ONLY and skips all LTE operations.
+         Otherwise preflight(), establish_lte(), rrc_connected(), safe_stop()
     gss: preflight(), start_scenario(scenario_id), set_power_dbm(dbm),
          verify_power_dbm(dbm), safe_stop()
     phone: preflight(), prepare(mode), attempt(reference, observation_s),
@@ -68,7 +69,8 @@ def run_fixed_power(plan, cmw, gss, phone, output, stop=None, notify=None):
     run_id = str(uuid4())
     record = {"run_id": run_id, "phase": "P4", "mode": "REAL_HARDWARE",
               "started_utc": _now(), "plan": vars(plan).copy(),
-              "status": "RUNNING", "test_mode": "GNSS_ONLY" if cmw is None else "GNSS_LTE",\n              "attempts": [], "valid": 0, "passed": 0}
+              "status": "RUNNING", "test_mode": "GNSS_ONLY" if cmw is None else "GNSS_LTE",
+              "attempts": [], "valid": 0, "passed": 0}
     _persist(output, record)
     touched = []
     try:
