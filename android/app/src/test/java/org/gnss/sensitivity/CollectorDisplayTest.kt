@@ -16,4 +16,17 @@ class CollectorDisplayTest {
         assertEquals("等待上位机开始", prepared.phase())
         assertEquals("正在采集", prepared.copy(activeAttempt = "active").phase())
     }
+    @Test fun manualCollectionDoesNotDependOnUsb() {
+        val manual = CollectorDisplay(manualActive = true, manualAccuracyM = 4.0)
+        assertEquals("独立采集中", manual.phase())
+        assertEquals("独立采集中", manual.copy(listening = true, connected = true).phase())
+        assertEquals("独立采集中", manual.copy(listening = false, connected = false).phase())
+        assertEquals(null, manual.errorM)
+        assertEquals(4.0, manual.manualAccuracyM!!, 0.0)
+    }
+
+    @Test fun manualStopReturnsToIdle() {
+        val manual = CollectorDisplay(manualActive = true)
+        assertEquals("采集服务未启动", manual.copy(manualActive = false).phase())
+    }
 }
