@@ -62,10 +62,8 @@ internal class ManualSession(
         val mock = if (android.os.Build.VERSION.SDK_INT >= 31) value.isMock
             else @Suppress("DEPRECATION") value.isFromMockProvider
         val time = value.elapsedRealtimeNanos
-        if (mock || value.provider != LocationManager.GPS_PROVIDER ||
-            time <= t0 || time > SystemClock.elapsedRealtimeNanos() ||
-            time <= (fix?.elapsedRealtimeNanos ?: 0L) ||
-            value.latitude !in -90.0..90.0 || value.longitude !in -180.0..180.0) return
+        if (!ManualPolicy.fresh(value.provider, mock, time, t0, SystemClock.elapsedRealtimeNanos(),
+            fix?.elapsedRealtimeNanos ?: 0L, value.latitude, value.longitude)) return
         if (ttff == null) ttff = (time - t0) / 1e9
         fix = Location(value)
         fixCount++
