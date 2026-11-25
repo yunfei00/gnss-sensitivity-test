@@ -51,6 +51,7 @@ class CollectorService : Service() {
     private var latest = JSONObject()
     private var live = JSONObject()
     private var manual: ManualSession? = null
+    private var manualId: String? = null
     private var localStop = false
     private var lastError: String? = null
     private val instanceId = UUID.randomUUID().toString()
@@ -101,10 +102,10 @@ class CollectorService : Service() {
         runCatching { server?.close() }
         runCatching { client?.close() }
         handler.post {
-            stopManual()
+            stopManual("SERVICE_STOP")
             stopActive("SERVICE_STOP")
             journal.close()
-            uiSnapshot = uiSnapshot.copy(listening = false, connected = false, activeAttempt = null, preparedAttempt = null)
+            uiSnapshot = uiSnapshot.copy(listening = false, connected = false, activeAttempt = null, preparedAttempt = null, manualActive = false)
         }
         worker.quitSafely()
         super.onDestroy()
@@ -162,24 +163,32 @@ class CollectorService : Service() {
             return
         }
         lastError = null
+        val id = UUID.randomUUID().toString()
         val session = ManualSession(location, handler, { refresh() }, { reason ->
             lastError = reason
-            stopManual()
+            stopManual(reason)
             refresh()
-        })
+        }, { kind, body -> journal.appendManual(id, kind, body) })
         manual = session
+        manualId = id
         try {
+            journal.appendManual(id, "SESSION_START", JSONObject().put("device_id", deviceId))
             session.start()
         } catch (error: Exception) {
-            stopManual()
+            stopManual("MANUAL_START_FAILED")
             lastError = error.message ?: "MANUAL_START_FAILED"
         }
         refresh()
     }
 
-    private fun stopManual() {
+    private fun stopManual(reason: String = "USER_STOP") {
         manual?.stop()
         manual = null
+        val id = manualId
+        manualId = null
+        if (id != null) runCatching {
+            journal.appendManual(id, "SESSION_STOP", JSONObject().put("reason", reason))
+        }.onFailure { lastError = "MANUAL_JOURNAL_ERROR: ${it.message}" }
     }
 
     private fun ready(): Boolean =
@@ -204,7 +213,7 @@ class CollectorService : Service() {
                 latitude = fix?.latitude, longitude = fix?.longitude, ttff = session.ttff,
                 usedInFix = session.satellites.filter { it.used }.distinctBy { it.constellation to it.svid }.size,
                 satellites = session.satellites, liveLatitude = fix?.latitude, liveLongitude = fix?.longitude,
-                liveFixCount = session.fixCount, lastError = lastError, recordCount = journal.count()
+                liveFixCount = session.fixCount, lastError = lastError, recordCount = journal.manualCount()
             )
             return
         }
