@@ -103,7 +103,8 @@ class Stage45Page(QWidget):
         mode_row.addWidget(QLabel("测试模式"))
         self.test_mode = QComboBox()
         self.test_mode.addItem("GNSS 独立模式（一期默认，无需 CMW500）", "GNSS_ONLY")
-        self.test_mode.addItem("GNSS + LTE 联合模式（CMW500 自动控制）", "GNSS_LTE")\n        mode_index = self.test_mode.findData(str(self.settings.value("test_mode", "GNSS_ONLY")))
+        self.test_mode.addItem("GNSS + LTE 联合模式（CMW500 自动控制）", "GNSS_LTE")
+        mode_index = self.test_mode.findData(str(self.settings.value("test_mode", "GNSS_ONLY")))
         self.test_mode.setCurrentIndex(max(0, mode_index))
         self.test_mode.currentIndexChanged.connect(self.save)
         self.test_mode.currentIndexChanged.connect(self.update_mode)
@@ -171,7 +172,9 @@ class Stage45Page(QWidget):
     def update_mode(self, *_):
         enabled = self.test_mode.currentData() == "GNSS_LTE"
         self.fields["cmw_host"].setEnabled(enabled and self.worker is None)
-        self.fields["cmw_port"].setEnabled(enabled and self.worker is None)\n\n    def save(self, *_):
+        self.fields["cmw_port"].setEnabled(enabled and self.worker is None)
+
+    def save(self, *_):
         for key, edit in self.fields.items():
             self.settings.setValue(key, edit.text())
         self.settings.setValue("version", self.version.currentText())
@@ -199,7 +202,8 @@ class Stage45Page(QWidget):
             self.append("FAIL: 请先选择在线 USB 手机")
             return
         v = {k: field.text().strip() for k, field in self.fields.items()}
-        v["version"] = self.version.currentText()\n        v["test_mode"] = self.test_mode.currentData()
+        v["version"] = self.version.currentText()
+        v["test_mode"] = self.test_mode.currentData()
         try:
             required = ("gss_host", "scenario", "calibration", "plane")
             if v["test_mode"] == "GNSS_LTE":
