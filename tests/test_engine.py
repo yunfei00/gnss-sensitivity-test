@@ -135,7 +135,7 @@ def test_field_usb_loss_preserves_completed_attempts_and_requires_new_execution(
 
     def field_result(*args):
         observation(*args)
-        phone.events[-1]["payload"]["satellite_association"] = "BRACKETED_STABLE_CALLBACKS"
+        phone.events[-1]["payload"]["satellite_association"] = "POST_FIX_CALLBACK"
 
     monkeypatch.setattr(phone, "_result", field_result)
     serial = AdbDevice("fixture", 1)
