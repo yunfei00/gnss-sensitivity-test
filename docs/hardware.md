@@ -16,10 +16,10 @@
 ## 首次联调
 ```powershell
 adb devices -l
-adb shell su -c id
-adb shell dumpsys location
-adb forward tcp:18765 tcp:18765
-adb forward --list
+adb -s SERIAL shell su -c id
+adb -s SERIAL shell dumpsys location
+adb -s SERIAL forward tcp:18765 tcp:18765
+adb -s SERIAL forward --remove tcp:18765
 ```
 18765 是**本项目自定义 Android 服务端口**，只有 APP 启动监听后才可连接。多设备使用 adb -s SERIAL。先验证穿墙 USB 支持数据传输、屏蔽箱关闭后 ADB 不断链。
 

@@ -19,6 +19,7 @@ Windows —LAN→ GSS7000/SimREPLAYplus；Windows —LAN→ CMW500（如有远�
 - 观测超时建议初值 **30 s**（可配置），晚于 20.3 s 的 fix 仍判 TTFF FAIL。
 
 ## 文档导航
+- [P0–P5 安装、运行、报告和现场交接](docs/phase-one.md)
 - [需求与范围](docs/requirements.md)
 - [系统架构](docs/architecture.md)
 - [设备连接与安全](docs/hardware.md)
@@ -32,3 +33,22 @@ Windows —LAN→ GSS7000/SimREPLAYplus；Windows —LAN→ CMW500（如有远�
 
 ## 开发原则
 Mock 与真实仪器驱动分离；未经确认的 SimREPLAYplus/CMW500 命令不得伪造为已验证；默认模拟模式不能冒充真实硬件测试。公开仓库不得包含设备密码、真实客户数据、商业手册原文或内网信息。
+
+## 无仪器快速验证
+
+```powershell
+uv sync --locked
+uv run --locked pytest -q
+uv run --locked python -m desktop --mock
+uv run --locked python -m desktop
+```
+
+Mock 默认跑完 3 档并在 `results/mock` 写入 SQLite、CSV、JSON、HTML。真机流程通过 USB ADB 连手机，SimREPLAYplus 与 CMW500 状态通过现场操作和证据确认。
+
+Windows 操作台包括运行监控、测试配置、历史与报告三个页面。运行时查看功率、TTFF、误差、解算卫星和档位进度。现场操作在表单中填写仪器读值与证据。Android APP 提供采集监控和设备诊断，基础采集使用系统定位权限。
+
+## USB 设备与 Android 调试 APK
+
+现场模式从「ADB USB 设备」下拉框选择已授权、在线的 USB 手机。程序启动时扫描，后台每 10 秒刷新一次，并监听插拔事件。开始后锁定设备。当前手机掉线时，中断轮次记为 INVALID，重连后选择原手机和历史运行再点击「恢复选中运行」。
+
+在 Windows 仓库根目录运行 `.\android\build-debug.ps1`，或在 [GitHub Actions](https://github.com/yunfei00/gnss-sensitivity-test/actions/workflows/ci.yml?query=branch%3Acodex%2Fphase-1) 选择成功运行，从 **Artifacts → android-debug** 下载 `app-debug.apk`。这是调试签名安装包。构建环境、ADB 版本和安装步骤见 [一期使用说明](docs/phase-one.md)。
