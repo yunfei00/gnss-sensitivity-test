@@ -18,3 +18,8 @@ Kotlin + Android SDK；前台 GNSS 测试 Service；LocationManager.GPS_PROVIDER
 
 ## APP 界面
 设备/权限诊断、GNSS 状态、当前测试 ID、当前轮次、经纬度、误差、TTFF、usedInFix、最近错误、本地记录数量；可手动停止。屏蔽箱关门后由 Windows 控制，不依赖人工点击。
+
+
+## 独立采集与自动化模式回归验收
+
+新增双模式功能的安装、手机操作、数据库检查、CI 与 GSS7000/CMW500 回归步骤见 [Android 独立采集与自动化测试验收方案](android-standalone-acceptance.md)。
