@@ -27,7 +27,7 @@ class Phone:
                     t0_monotonic_ns=t0, first_fix_elapsed_realtime_ns=t0+1000000000,
                     latitude=0.0, longitude=0.0, used_in_fix=6,
                     satellite_elapsed_ns=t0+1000000000,
-                    satellite_association="BRACKETED_STABLE_CALLBACKS")
+                    satellite_association="POST_FIX_CALLBACK")
     def stop_run(self): return True
 
 
