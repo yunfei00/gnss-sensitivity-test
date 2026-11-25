@@ -306,8 +306,8 @@ class CollectorService : Service() {
                         .put("used_in_fix", inFix).put("cn0_db_hz", status.getCn0DbHz(i).toDouble()))
                 }
                 snapshots.addLast(SatelliteSnapshot(now, used))
-                if (selection.fix == null) {
-                    while (snapshots.first().receivedNs < now - toleranceMs * 2_000_000) snapshots.removeFirst()
+                while (snapshots.isNotEmpty() && snapshots.first().receivedNs < now - toleranceMs * 2_000_000) {
+                    snapshots.removeFirst()
                 }
                 publish("SATELLITE_STATUS", JSONObject().put("used_in_fix", used.size)
                     .put("timestamp_basis", "callback_received").put("satellites", satellites), now)
@@ -384,7 +384,7 @@ class CollectorService : Service() {
                 .put("integrity", if (status == "INVALID") "INVALID" else "COMPLETE")
             if (satellite != null) payload.put("used_in_fix", satellite.count)
                 .put("satellite_elapsed_ns", satellite.receivedNs)
-                .put("satellite_association", "BRACKETED_STABLE_CALLBACKS")
+                .put("satellite_association", "POST_FIX_CALLBACK")
             if (status == "INVALID") lastError = reason
             runCatching { publish("ATTEMPT_RESULT", payload) }
                 .onFailure { lastError = "JOURNAL_ERROR: ${it.message}" }
