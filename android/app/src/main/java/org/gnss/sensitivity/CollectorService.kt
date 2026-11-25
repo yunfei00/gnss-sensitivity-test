@@ -50,6 +50,7 @@ class CollectorService : Service() {
     private val started = mutableSetOf<String>()
     @Volatile private var active: Attempt? = null
     private var latest = JSONObject()
+    private var live = JSONObject()
     private var localStop = false
     private var lastError: String? = null
     private val instanceId = UUID.randomUUID().toString()
@@ -164,7 +165,7 @@ class CollectorService : Service() {
     private fun refresh() {
         fun number(key: String) = latest.optDouble(key).takeIf { it.isFinite() }
         fun text(key: String) = latest.optString(key).takeIf { it.isNotBlank() && !latest.isNull(key) }
-        val raw = latest.optJSONArray("satellites")
+        val raw = live.optJSONArray("satellites") ?: latest.optJSONArray("satellites")
         val satellites = List(raw?.length() ?: 0) { index ->
             val item = checkNotNull(raw).getJSONObject(index)
             DisplaySatellite(item.getInt("constellation"), item.getInt("svid"),
@@ -175,7 +176,11 @@ class CollectorService : Service() {
             activeRun = run, activeAttempt = active?.id, preparedAttempt = prepared, latestAttempt = text("attempt_id"),
             latitude = number("latitude"), longitude = number("longitude"), ttff = number("ttff_s"),
             errorM = number("horizontal_error_m"), usedInFix = number("used_in_fix")?.toInt(),
-            satellites = satellites, result = text("status"), reason = text("reason"),
+            satellites = satellites, liveLatitude = live.optDouble("latitude").takeIf { it.isFinite() },
+            liveLongitude = live.optDouble("longitude").takeIf { it.isFinite() },
+            liveErrorM = live.optDouble("horizontal_error_m").takeIf { it.isFinite() },
+            liveAgeMs = live.optLong("age_ms", -1).takeIf { it >= 0 },
+            liveFixCount = live.optLong("fix_count", 0), result = text("status"), reason = text("reason"),
             lastError = lastError, recordCount = journal.count()
         )
     }
@@ -192,6 +197,7 @@ class CollectorService : Service() {
                 if (run != target) {
                     started.clear()
                     latest = JSONObject()
+                    live = JSONObject()
                 }
                 run = target
                 prepared = null
@@ -214,6 +220,7 @@ class CollectorService : Service() {
                         }
                         prepared = id
                         latest = JSONObject()
+                        live = JSONObject()
                     }
                     "START_ATTEMPT" -> {
                         check(ready() && !localStop && active == null && id == prepared && id !in started)
@@ -229,6 +236,7 @@ class CollectorService : Service() {
                         started.add(id)
                         prepared = null
                         latest = JSONObject()
+                        live = JSONObject()
                         active = attempt
                         try {
                             attempt.start()
@@ -259,6 +267,8 @@ class CollectorService : Service() {
         private var t0 = 0L
         private lateinit var selection: FirstFix
         private var receiverStarted = false
+        private var fixCount = 0L
+        private var lastFixAtNs = 0L
         private val snapshots = ArrayDeque<SatelliteSnapshot>()
         private val timeout = Runnable {
             guard {
@@ -320,11 +330,23 @@ class CollectorService : Service() {
             val now = SystemClock.elapsedRealtimeNanos()
             val fix = Fix(value.elapsedRealtimeNanos, value.latitude, value.longitude)
             val mock = if (Build.VERSION.SDK_INT >= 31) value.isMock else @Suppress("DEPRECATION") value.isFromMockProvider
+            val fresh = !mock && value.provider == LocationManager.GPS_PROVIDER &&
+                fix.atNs > t0 && fix.atNs <= now && fix.atNs > lastFixAtNs &&
+                fix.latitude in -90.0..90.0 && fix.longitude in -180.0..180.0
+            if (fresh) {
+                lastFixAtNs = fix.atNs
+                fixCount++
+                live = JSONObject().put("latitude", fix.latitude).put("longitude", fix.longitude)
+                    .put("horizontal_error_m", Geodesic.WGS84.Inverse(lat, lon, fix.latitude, fix.longitude).s12)
+                    .put("age_ms", (now - fix.atNs) / 1_000_000)
+                    .put("fix_count", fixCount)
+            }
             val first = selection.accept(fix, value.provider, mock, now)
             val payload = JSONObject().put("provider", value.provider).put("mock_location", mock)
                 .put("location_elapsed_ns", fix.atNs).put("locked_first_fix", first)
             if (fix.latitude.isFinite() && fix.longitude.isFinite()) {
                 payload.put("latitude", fix.latitude).put("longitude", fix.longitude)
+                .put("fresh", fresh).put("fix_count", fixCount)
             }
             publish("LOCATION_UPDATE", payload, now)
             if (first) {
