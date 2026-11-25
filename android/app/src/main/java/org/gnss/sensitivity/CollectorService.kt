@@ -164,7 +164,7 @@ class CollectorService : Service() {
 
     private fun startManual() {
         if (manual != null) return
-        if (!ready() || active != null || prepared != null || run != null) {
+        if (!ManualPolicy.canStart(ready(), active != null, prepared != null, run != null)) {
             lastError = "MANUAL_NOT_READY_OR_RUN_CONFIGURED"
             refresh()
             return
