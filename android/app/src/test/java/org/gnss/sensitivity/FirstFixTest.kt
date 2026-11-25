@@ -18,15 +18,18 @@ class FirstFixTest {
         assertEquals(valid, selector.fix)
     }
 
-    @Test fun requiresStableSatelliteIdentitiesOnBothSides() {
+    @Test fun acceptsFirstPostFixCallbackWithinTolerance() {
         val selector = FirstFix(100, 500)
         selector.accept(Fix(150, 0.0, 0.0), "gps", false, 152)
         val before = SatelliteSnapshot(140, setOf(1 to 2, 1 to 3))
         val after = before.copy(receivedNs = 155)
         assertNull(selector.associate(listOf(before), 20))
         assertNull(selector.associate(listOf(before, after), 9))
-        assertNull(selector.associate(listOf(before, after.copy(used = setOf(1 to 2, 1 to 8))), 20))
+        assertEquals(after.copy(used = setOf(1 to 2, 1 to 8)),
+            selector.associate(listOf(before, after.copy(used = setOf(1 to 2, 1 to 8))), 20))
         assertEquals(after, selector.associate(listOf(before, after), 20))
+        assertNull(selector.associate(listOf(before), 20))
+        assertNull(selector.associate(listOf(SatelliteSnapshot(171, emptySet())), 20))
     }
 
     @Test fun zeroUsedSatellitesCanBeReliableTelemetry() {
