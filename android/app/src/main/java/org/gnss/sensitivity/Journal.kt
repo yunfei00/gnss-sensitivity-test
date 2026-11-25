@@ -16,17 +16,37 @@ interface Journal {
     fun complete(id: String, response: String)
 }
 
-class SQLiteJournal(context: Context) : SQLiteOpenHelper(context, "gnss-events.db", null, 1), Journal {
+class SQLiteJournal(context: Context) : SQLiteOpenHelper(context, "gnss-events.db", null, 2), Journal {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, body TEXT NOT NULL)")
         db.execSQL("CREATE INDEX events_run_seq ON events(run, seq)")
         db.execSQL("CREATE TABLE commands(id TEXT PRIMARY KEY, request TEXT NOT NULL, reply TEXT NOT NULL)")
         db.execSQL("CREATE TABLE cursors(run TEXT PRIMARY KEY, seq INTEGER NOT NULL)")
+        createManualTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        error("Unsupported journal migration $oldVersion -> $newVersion")
+        if (oldVersion == 1 && newVersion == 2) createManualTable(db)
+        else error("Unsupported journal migration $oldVersion -> $newVersion")
     }
+
+    private fun createManualTable(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE manual_events(seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, kind TEXT NOT NULL, wall_ms INTEGER NOT NULL, monotonic_ns INTEGER NOT NULL, body TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX manual_session_seq ON manual_events(session, seq)")
+    }
+
+    fun appendManual(session: String, kind: String, body: JSONObject) {
+        writableDatabase.insertOrThrow("manual_events", null, ContentValues().apply {
+            put("session", session)
+            put("kind", kind)
+            put("wall_ms", System.currentTimeMillis())
+            put("monotonic_ns", android.os.SystemClock.elapsedRealtimeNanos())
+            put("body", body.toString())
+        })
+    }
+
+    fun manualCount(): Long = readableDatabase.rawQuery("SELECT count(*) FROM manual_events", null)
+        .use { cursor -> cursor.moveToFirst(); cursor.getLong(0) }
 
     override fun append(event: JSONObject) {
         writableDatabase.insertOrThrow("events", null, ContentValues().apply {
