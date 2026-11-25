@@ -63,7 +63,11 @@ def test_p5_prevents_overwriting_existing_runs(tmp_path):
 
 
 def test_gnss_only_sweep_without_cmw(tmp_path):
-    result = run_sensitivity_sweep(plan(), None, Gss, Phone, tmp_path / "gnss")
+    class SweepGss(Gss):
+        def set_power_dbm(self, value):
+            assert -122 <= value <= -120
+
+    result = run_sensitivity_sweep(plan(), None, SweepGss, Phone, tmp_path / "gnss")
     assert result["status"] == "FINISHED"
     assert result["threshold_dbm"] == -122
     assert [x["power_dbm"] for x in result["levels"]] == [-120, -121, -122]
