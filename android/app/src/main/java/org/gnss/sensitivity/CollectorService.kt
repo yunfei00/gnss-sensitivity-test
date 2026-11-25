@@ -84,6 +84,13 @@ class CollectorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "START_MANUAL") handler.post { startManual() }
         if (intent?.action == "STOP_MANUAL") handler.post { stopManual(); refresh() }
+        if (intent?.action == "STOP_RUN_LOCAL") handler.post {
+            localStop = true
+            stopActive("USER_STOP")
+            prepared = null
+            run = null
+            refresh()
+        }
         if (intent?.action == "STOP") handler.post {
             stopManual()
             localStop = true
