@@ -75,7 +75,7 @@ class UsbGnssAdapter:
             "startup_mode": "HOT", "preparation_evidence": evidence})
         self.phone.command("START_ATTEMPT", attempt_id, {
             "reference": reference,
-            "observation_s": observation_s, "satellite_tolerance_ms": 1000})
+            "observation_s": observation_s, "satellite_tolerance_ms": 2000})
         deadline = monotonic() + observation_s + 8
         while monotonic() < deadline:
             if self.stop is not None and self.stop.is_set():
