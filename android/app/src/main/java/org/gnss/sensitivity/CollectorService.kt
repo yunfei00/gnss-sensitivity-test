@@ -1,7 +1,6 @@
 package org.gnss.sensitivity
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -314,14 +313,15 @@ class CollectorService : Service() {
             }
         }
 
-        @SuppressLint("MissingPermission")
+        private val collector = GnssCollector(location, handler, gnss, this)
+
         fun start() {
             check(ready())
             val duration = (window * 1_000_000_000).toLong()
-            check(location.registerGnssStatusCallback(gnss, handler))
-            t0 = SystemClock.elapsedRealtimeNanos()
-            selection = FirstFix(t0, duration)
-            location.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, this, handler.looper)
+            collector.start { startedAt ->
+                t0 = startedAt
+                selection = FirstFix(t0, duration)
+            }
             publish("DEVICE_STATUS", JSONObject().put("t0_monotonic_ns", t0), t0)
             handler.postDelayed(timeout, (window * 1000).toLong())
         }
@@ -371,8 +371,7 @@ class CollectorService : Service() {
         fun release() {
             handler.removeCallbacks(timeout)
             handler.removeCallbacks(settleFix)
-            runCatching { location.removeUpdates(this) }
-            runCatching { location.unregisterGnssStatusCallback(gnss) }
+            collector.stop()
         }
 
         fun complete(status: String, reason: String, satellite: SatelliteSnapshot? = null) {
