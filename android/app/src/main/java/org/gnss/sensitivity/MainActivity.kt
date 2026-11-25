@@ -140,7 +140,7 @@ class MainActivity : Activity() {
             start = action("开始采集") { requestCollector() }
             stop = action("停止当前试验") {
                 if (CollectorService.running) {
-                    startService(Intent(this@MainActivity, CollectorService::class.java).setAction(if (manualMode) "STOP_MANUAL" else "STOP"))
+                    startService(Intent(this@MainActivity, CollectorService::class.java).setAction(if (manualMode) "STOP_MANUAL" else "STOP_RUN_LOCAL"))
                 }
             }
             styleButton(start, accent, Color.WHITE)
@@ -216,11 +216,12 @@ class MainActivity : Activity() {
     }
 
     private fun render() {
-        val display = CollectorService.uiSnapshot
+        val snapshot = CollectorService.uiSnapshot
         val running = CollectorService.running
-        if (display.manualActive || display.activeRun != null || display.listening) requestingService = false
-        if (display.manualActive) manualMode = true
-        if (display.activeRun != null) manualMode = false
+        if (snapshot.manualActive || snapshot.activeRun != null || (!manualMode && snapshot.listening)) requestingService = false
+        if (snapshot.manualActive) manualMode = true
+        if (snapshot.activeRun != null) manualMode = false
+        val display = if (manualMode && !snapshot.manualActive) CollectorDisplay(lastError = snapshot.lastError) else snapshot
         val locked = display.manualActive || display.activeRun != null || requestingService
         manualModeButton.isEnabled = !locked
         autoModeButton.isEnabled = !locked
@@ -243,9 +244,9 @@ class MainActivity : Activity() {
             else -> "打开系统定位后启动 USB 采集"
         })
         start.show(if (manualMode) "开始采集" else "启动 USB 通信")
-        stop.show(if (manualMode) "停止采集" else "停止当前试验")
+        stop.show(if (manualMode) "停止采集" else "结束自动化测试")
         start.isEnabled = !requestingService && if (manualMode) !display.manualActive && display.activeRun == null else !display.listening
-        stop.isEnabled = running && if (manualMode) display.manualActive else (display.activeAttempt != null || display.preparedAttempt != null)
+        stop.isEnabled = running && if (manualMode) display.manualActive else display.activeRun != null
         val trial = display.activeAttempt ?: display.preparedAttempt ?: display.latestAttempt
         identifiers.visibility = if (manualMode) View.GONE else View.VISIBLE
         identifiers.show("运行 ${display.activeRun ?: "—"}\n试验 ${trial ?: "—"}")
@@ -289,6 +290,10 @@ class MainActivity : Activity() {
         checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun requestCollector() {
+        if (getSystemService(LocationManager::class.java)?.isProviderEnabled(LocationManager.GPS_PROVIDER) != true) {
+            Toast.makeText(this, "请先开启系统定位", Toast.LENGTH_LONG).show()
+            return
+        }
         if (hasFineLocation()) startCollector()
         else requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION), 1)
