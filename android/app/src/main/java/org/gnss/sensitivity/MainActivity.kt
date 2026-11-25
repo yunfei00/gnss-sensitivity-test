@@ -53,6 +53,10 @@ class MainActivity : Activity() {
     private lateinit var stop: Button
     private lateinit var probe: Button
     private lateinit var scroll: ScrollView
+    private lateinit var manualModeButton: Button
+    private lateinit var autoModeButton: Button
+    private lateinit var accuracyLabel: TextView
+    private var manualMode = true
     private var requestingService = false
     private var showDiagnostics = false
     private var probing = false
@@ -66,6 +70,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        manualMode = savedInstanceState?.getBoolean("manualMode") ?: true
         val content = column()
         content.setBackgroundColor(backgroundColor)
         if (Build.VERSION.SDK_INT >= 35) {
@@ -86,7 +91,7 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(16), dp(20), dp(18))
         }
         header.addView(text(getString(R.string.app_name), 22, Color.WHITE, true))
-        header.addView(text("Android 采集端 · USB ADB", 13, 0xffc7d7eb.toInt()))
+        header.addView(text("Android GNSS · 独立采集 / 自动化测试", 13, 0xffc7d7eb.toInt()))
         content.addView(header)
 
         val tabs = LinearLayout(this).apply { setPadding(dp(16), dp(8), dp(16), dp(2)) }
@@ -113,20 +118,29 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("diagnostics", showDiagnostics)
+        outState.putBoolean("manualMode", manualMode)
         super.onSaveInstanceState(outState)
     }
 
     private fun buildMonitor() = page().apply {
+        addView(card("工作模式").apply {
+            val modes = LinearLayout(this@MainActivity)
+            manualModeButton = action("独立采集") { manualMode = true; render() }
+            autoModeButton = action("自动化测试") { manualMode = false; render() }
+            modes.addView(manualModeButton, weighted())
+            modes.addView(autoModeButton, weighted())
+            addView(modes)
+        })
         addView(card("连接与控制").apply {
             phase = text("", 20, ink, true)
             connection = text("", 13, muted)
             addView(phase)
             addView(connection)
             val controls = LinearLayout(this@MainActivity)
-            start = action("启动 USB 采集") { requestCollector() }
+            start = action("开始采集") { requestCollector() }
             stop = action("停止当前试验") {
                 if (CollectorService.running) {
-                    startService(Intent(this@MainActivity, CollectorService::class.java).setAction("STOP"))
+                    startService(Intent(this@MainActivity, CollectorService::class.java).setAction(if (manualMode) "STOP_MANUAL" else "STOP"))
                 }
             }
             styleButton(start, accent, Color.WHITE)
@@ -141,6 +155,7 @@ class MainActivity : Activity() {
             val line = LinearLayout(this@MainActivity)
             ttff = metric(line, "首次定位 TTFF")
             error = metric(line, "水平误差")
+            accuracyLabel = (error.parent as LinearLayout).getChildAt(0) as TextView
             used = metric(line, "解算卫星")
             addView(line)
             coordinates = text("", 13, muted)
@@ -203,35 +218,49 @@ class MainActivity : Activity() {
     private fun render() {
         val display = CollectorService.uiSnapshot
         val running = CollectorService.running
-        if (running) requestingService = false
+        if (display.manualActive || display.activeRun != null || display.listening) requestingService = false
+        if (display.manualActive) manualMode = true
+        if (display.activeRun != null) manualMode = false
+        val locked = display.manualActive || display.activeRun != null || requestingService
+        manualModeButton.isEnabled = !locked
+        autoModeButton.isEnabled = !locked
+        styleButton(manualModeButton, if (manualMode) accent else 0xffe3ebf5.toInt(), if (manualMode) Color.WHITE else ink)
+        styleButton(autoModeButton, if (!manualMode) accent else 0xffe3ebf5.toInt(), if (!manualMode) Color.WHITE else ink)
         val fine = hasFineLocation()
         val gps = getSystemService(LocationManager::class.java)?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
         phase.show(when {
             requestingService -> "正在启动采集服务"
+            manualMode -> if (display.manualActive) "独立采集中" else "独立采集未启动"
             running && !display.listening -> "USB 服务未就绪"
             else -> display.phase()
         })
         connection.show(when {
             !fine -> "请授予精确定位权限"
             !gps -> "请打开系统定位"
+            manualMode -> "独立模式无需 USB 或上位机"
             display.connected -> "USB ADB 已连接 · TCP 18765"
             display.listening -> "等待 Windows 上位机连接 · TCP 18765"
             else -> "打开系统定位后启动 USB 采集"
         })
-        start.isEnabled = (!running || !fine) && !requestingService
-        stop.isEnabled = running && (display.activeAttempt != null || display.preparedAttempt != null)
+        start.show(if (manualMode) "开始采集" else "启动 USB 通信")
+        stop.show(if (manualMode) "停止采集" else "停止当前试验")
+        start.isEnabled = !requestingService && if (manualMode) !display.manualActive && display.activeRun == null else !display.listening
+        stop.isEnabled = running && if (manualMode) display.manualActive else (display.activeAttempt != null || display.preparedAttempt != null)
         val trial = display.activeAttempt ?: display.preparedAttempt ?: display.latestAttempt
+        identifiers.visibility = if (manualMode) View.GONE else View.VISIBLE
         identifiers.show("运行 ${display.activeRun ?: "—"}\n试验 ${trial ?: "—"}")
         ttff.show(format(display.ttff, 3, " s"))
-        error.show(format(display.errorM, 2, " m"))
+        accuracyLabel.show(if (manualMode) "定位精度" else "水平误差")
+        error.show(format(if (manualMode) display.manualAccuracyM else display.errorM, 2, " m"))
         used.show(display.usedInFix?.toString() ?: "—")
         coordinates.show("纬度 ${format(display.latitude, 6, "°")}   经度 ${format(display.longitude, 6, "°")}")
-        livePosition.show(if (display.liveLatitude == null || display.liveLongitude == null)
+        livePosition.show(if (manualMode && !display.manualActive) "等待开始独立采集" else if (display.liveLatitude == null || display.liveLongitude == null)
             "本轮尚无新定位 · 不显示上一轮坐标" else
             "最新纬度 ${format(display.liveLatitude, 6, "°")}  经度 ${format(display.liveLongitude, 6, "°")}\n" +
-            "实时误差 ${format(display.liveErrorM, 2, " m")} · 新定位 ${display.liveFixCount} 条 · " +
-            "回调延迟 ${display.liveAgeMs ?: 0} ms")
+            (if (manualMode) "定位精度 ${format(display.manualAccuracyM, 2, " m")} · 新定位 ${display.liveFixCount} 条" else
+            "实时误差 ${format(display.liveErrorM, 2, " m")} · 新定位 ${display.liveFixCount} 条 · 回调延迟 ${display.liveAgeMs ?: 0} ms"))
         result.show(when {
+            manualMode -> if (display.manualActive) "持续采集 · TTFF 仅供调试参考" else "等待独立采集"
             display.activeAttempt != null -> "正在等待本轮结果"
             display.result == "OBSERVED" -> "首次定位已采集 · 待上位机判定"
             display.reason == "TIMEOUT" -> "观察窗口内未定位"
@@ -239,8 +268,8 @@ class MainActivity : Activity() {
             else -> "等待试验"
         })
         satellites.show(if (display.satellites.isEmpty()) "等待卫星遥测" else {
-            val strongest = display.satellites.sortedByDescending { it.cn0 }.take(6)
-            "${display.satellites.size} 个信号 · 最强 ${strongest.size} 个\n" +
+            val strongest = display.satellites.sortedByDescending { it.cn0 }
+            "${display.satellites.size} 个信号 · 参与解算 ${strongest.filter { it.used }.distinctBy { it.constellation to it.svid }.size} 颗\n" +
                 strongest.joinToString("\n") {
                     "${constellation(it.constellation)} ${it.svid}    ${format(it.cn0, 1, " dB-Hz")}" +
                         if (it.used) "    参与解算" else ""
@@ -274,7 +303,7 @@ class MainActivity : Activity() {
 
     private fun startCollector() {
         try {
-            startForegroundService(Intent(this, CollectorService::class.java))
+            startForegroundService(Intent(this, CollectorService::class.java).setAction(if (manualMode) "START_MANUAL" else "START_USB"))
             requestingService = true
             ui.postDelayed({ requestingService = false }, 4000)
             render()
