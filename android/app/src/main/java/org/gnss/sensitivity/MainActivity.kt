@@ -45,6 +45,7 @@ class MainActivity : Activity() {
     private lateinit var records: TextView
     private lateinit var coordinates: TextView
     private lateinit var result: TextView
+    private lateinit var livePosition: TextView
     private lateinit var satellites: TextView
     private lateinit var systemChecks: TextView
     private lateinit var rootStatus: TextView
@@ -147,6 +148,10 @@ class MainActivity : Activity() {
             addView(coordinates)
             addView(result)
         })
+        addView(card("实时定位（本轮）").apply {
+            livePosition = text("等待新的 GPS 定位", 14, ink).also { it.setTextIsSelectable(true) }
+            addView(livePosition)
+        })
         addView(card("卫星信号").apply {
             satellites = text("", 13, ink)
             addView(satellites)
@@ -221,6 +226,11 @@ class MainActivity : Activity() {
         error.show(format(display.errorM, 2, " m"))
         used.show(display.usedInFix?.toString() ?: "—")
         coordinates.show("纬度 ${format(display.latitude, 6, "°")}   经度 ${format(display.longitude, 6, "°")}")
+        livePosition.show(if (display.liveLatitude == null || display.liveLongitude == null)
+            "本轮尚无新定位 · 不显示上一轮坐标" else
+            "最新纬度 ${format(display.liveLatitude, 6, "°")}  经度 ${format(display.liveLongitude, 6, "°")}\n" +
+            "实时误差 ${format(display.liveErrorM, 2, " m")} · 新定位 ${display.liveFixCount} 条 · " +
+            "回调延迟 ${display.liveAgeMs ?: 0} ms")
         result.show(when {
             display.activeAttempt != null -> "正在等待本轮结果"
             display.result == "OBSERVED" -> "首次定位已采集 · 待上位机判定"
