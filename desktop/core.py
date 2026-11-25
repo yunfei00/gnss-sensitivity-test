@@ -35,7 +35,7 @@ class RunConfig:
     reference_lon: float = 0.0
     startup_mode: str = "HOT"
     observation_s: float = 30.0
-    satellite_tolerance_ms: int = 1000
+    satellite_tolerance_ms: int = 2000
     settle_s: float = 0.0
     power_tolerance_db: float = 0.1
     calibration_ref: str = "synthetic"
@@ -107,10 +107,10 @@ def evaluate(config: RunConfig, payload: dict) -> dict:
         config.reference_lat, config.reference_lon, lat, lon
     )["s12"]
     used, satellite = payload.get("used_in_fix"), payload.get("satellite_elapsed_ns")
-    expected = "MOCK" if config.mock else "BRACKETED_STABLE_CALLBACKS"
+    expected = "MOCK" if config.mock else "POST_FIX_CALLBACK"
     if (type(used) is not int or used < 0 or payload.get("satellite_association") != expected
-            or type(satellite) is not int or satellite < t0
-            or abs(satellite - fix) > config.satellite_tolerance_ms * 1_000_000):
+            or type(satellite) is not int or satellite < fix
+            or satellite - fix > config.satellite_tolerance_ms * 1_000_000):
         return verdict("INVALID", "UNRELIABLE_USED_IN_FIX")
 
     failed = []
