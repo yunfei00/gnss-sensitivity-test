@@ -50,8 +50,13 @@ class FirstFixTest {
         assertNull(selector.confirm(SatelliteSnapshot(160, setOf(1 to 2))))
         val actual = Fix(170, 1.0, 1.0)
         selector.offer(actual, "gps", false, 172)
-        assertEquals(actual, selector.confirm(SatelliteSnapshot(175, setOf(1 to 2))))
-        assertEquals(actual, selector.fix)
+        assertNull(selector.confirm(SatelliteSnapshot(175, setOf(1 to 2))))
+        assertEquals(actual, selector.firstSatelliteFix)
+        assertNull(selector.fix)
+        val qualified = Fix(180, 1.0, 1.0)
+        selector.offer(qualified, "gps", false, 182)
+        assertEquals(qualified, selector.confirm(SatelliteSnapshot(185, setOf(1 to 2, 1 to 3, 1 to 4, 1 to 5))))
+        assertEquals(qualified, selector.fix)
     }
 
     @Test fun expiredOrMissingSatelliteEvidenceDoesNotConfirmFix() {

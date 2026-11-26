@@ -12,10 +12,12 @@ internal class GnssCollector(
     private val location: LocationManager,
     private val handler: Handler,
     private val gnss: GnssStatus.Callback,
-    private val listener: LocationListener
+    private val listener: LocationListener,
+    private val diagnostic: (org.json.JSONObject) -> Unit = {}
 ) {
     private var registered = false
     private var requested = false
+    private val diagnostics = GnssDiagnostics(location, handler, diagnostic)
 
     @SuppressLint("MissingPermission")
     fun start(beforeRequest: (Long) -> Unit) {
@@ -24,6 +26,7 @@ internal class GnssCollector(
             check(location.registerGnssStatusCallback(gnss, handler))
             registered = true
             beforeRequest(SystemClock.elapsedRealtimeNanos())
+            diagnostics.start()
             requested = true
             location.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, listener, handler.looper)
         } catch (error: Exception) {
@@ -33,6 +36,7 @@ internal class GnssCollector(
     }
 
     fun stop() {
+        diagnostics.stop()
         if (requested) {
             requested = false
             runCatching { location.removeUpdates(listener) }

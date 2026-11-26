@@ -318,6 +318,12 @@ class CollectorService : Service() {
         return status()
     }
 
+    private fun wifiConnected(): Boolean {
+        val manager = getSystemService(android.net.ConnectivityManager::class.java)
+        return manager?.getNetworkCapabilities(manager.activeNetwork)
+            ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+    }
+
     private fun stopActive(reason: String) {
         active?.complete("INVALID", reason)
     }
@@ -356,12 +362,17 @@ class CollectorService : Service() {
                     val inFix = status.usedInFix(i)
                     if (inFix) used.add(constellation to svid)
                     satellites.put(JSONObject().put("constellation", constellation).put("svid", svid)
-                        .put("used_in_fix", inFix).put("cn0_db_hz", status.getCn0DbHz(i).toDouble()))
+                        .put("used_in_fix", inFix).put("cn0_db_hz", status.getCn0DbHz(i).toDouble())
+                        .put("has_ephemeris", status.hasEphemerisData(i)).put("has_almanac", status.hasAlmanacData(i)))
                 }
                 publish("SATELLITE_STATUS", JSONObject().put("used_in_fix", used.size)
                     .put("timestamp_basis", "callback_received").put("satellites", satellites), now)
                 val snapshot = SatelliteSnapshot(now, used)
+                val previous = selection.firstSatelliteFix
                 val confirmed = selection.confirm(snapshot)
+                if (previous == null) selection.firstSatelliteFix?.let {
+                    publish("DEVICE_STATUS", JSONObject().put("first_satellite_ttff_s", (it.atNs - t0) / 1e9))
+                }
                 if (confirmed != null) {
                     publish("FIRST_FIX", metrics(confirmed), confirmed.atNs)
                     complete("OBSERVED", "FIRST_FIX", snapshot)
@@ -369,7 +380,9 @@ class CollectorService : Service() {
             }
         }
 
-        private val collector = GnssCollector(location, handler, gnss, this)
+        private val collector = GnssCollector(location, handler, gnss, this) { body ->
+            guard { publish("DEVICE_STATUS", JSONObject().put("gnss_diagnostic", body)) }
+        }
 
         fun start() {
             check(ready())
@@ -378,8 +391,9 @@ class CollectorService : Service() {
                 t0 = startedAt
                 selection = SatelliteConfirmedFix(t0, duration, toleranceMs * 1_000_000)
             }
-            publish("DEVICE_STATUS", JSONObject().put("t0_monotonic_ns", t0), t0)
-            handler.postDelayed(timeout, (window * 1000).toLong())
+            publish("DEVICE_STATUS", JSONObject().put("t0_monotonic_ns", t0)
+                .put("wifi_connected", wifiConnected()), t0)
+            handler.postDelayed(timeout, (window * 1000).toLong() + toleranceMs)
         }
 
         override fun onLocationChanged(value: Location) = guard {
@@ -399,7 +413,7 @@ class CollectorService : Service() {
             }
             selection.offer(fix, value.provider, mock, now)
             val payload = JSONObject().put("provider", value.provider).put("mock_location", mock)
-                .put("location_elapsed_ns", fix.atNs).put("locked_first_fix", false)
+                .put("location_elapsed_ns", fix.atNs).put("location_utc_ms", value.time).put("locked_first_fix", false)
             if (fix.latitude.isFinite() && fix.longitude.isFinite()) {
                 payload.put("latitude", fix.latitude).put("longitude", fix.longitude)
                 .put("fresh", fresh).put("fix_count", fixCount)

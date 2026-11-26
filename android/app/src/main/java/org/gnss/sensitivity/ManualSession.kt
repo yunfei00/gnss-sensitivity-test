@@ -36,10 +36,17 @@ internal class ManualSession(
                 satellites.forEach { sat -> put(org.json.JSONObject().put("constellation", sat.constellation)
                     .put("svid", sat.svid).put("cn0_db_hz", sat.cn0).put("used_in_fix", sat.used)) }
             }))
+            persist("GNSS_DIAGNOSTIC", org.json.JSONObject().put("kind", "ephemeris").put("satellites", org.json.JSONArray().apply {
+                for (i in 0 until status.satelliteCount) put(org.json.JSONObject().put("svid", status.getSvid(i))
+                    .put("constellation", status.getConstellationType(i)).put("has_ephemeris", status.hasEphemerisData(i))
+                    .put("has_almanac", status.hasAlmanacData(i)))
+            }))
             if (running) changed(this@ManualSession)
         }
     }
-    private val collector = GnssCollector(location, handler, callback, this)
+    private val collector = GnssCollector(location, handler, callback, this) { body ->
+        if (running) persist("GNSS_DIAGNOSTIC", body)
+    }
 
     fun start() {
         check(!running)
@@ -68,7 +75,7 @@ internal class ManualSession(
         fix = Location(value)
         fixCount++
         persist("LOCATION_UPDATE", org.json.JSONObject().put("latitude", value.latitude)
-            .put("longitude", value.longitude).put("location_elapsed_ns", time)
+            .put("longitude", value.longitude).put("location_elapsed_ns", time).put("location_utc_ms", value.time)
             .put("accuracy_m", if (value.hasAccuracy()) value.accuracy.toDouble() else org.json.JSONObject.NULL)
             .put("ttff_s", ttff).put("fix_count", fixCount))
         if (running) changed(this)

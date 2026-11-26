@@ -35,6 +35,8 @@ class FirstFix(private val startNs: Long, private val windowNs: Long) {
 internal class SatelliteConfirmedFix(private val startNs: Long, private val windowNs: Long,
                                      private val toleranceNs: Long) {
     private var pending: Fix? = null
+    var firstSatelliteFix: Fix? = null
+        private set
     var fix: Fix? = null
         private set
 
@@ -49,6 +51,8 @@ internal class SatelliteConfirmedFix(private val startNs: Long, private val wind
         if (fix != null || snapshot.receivedNs < candidate.atNs) return null
         pending = null
         if (snapshot.used.isEmpty() || snapshot.receivedNs - candidate.atNs > toleranceNs) return null
+        if (firstSatelliteFix == null) firstSatelliteFix = candidate
+        if (snapshot.count < 4) return null
         fix = candidate
         return candidate
     }
