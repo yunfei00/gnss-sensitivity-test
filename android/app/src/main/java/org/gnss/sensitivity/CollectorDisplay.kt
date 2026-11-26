@@ -24,8 +24,11 @@ data class CollectorDisplay(
     val reason: String? = null,
     val lastError: String? = null,
     val recordCount: Long = 0,
+    val manualActive: Boolean = false,
+    val manualAccuracyM: Double? = null,
 ) {
     fun phase(): String = when {
+        manualActive -> "独立采集中"
         activeAttempt != null -> "正在采集"
         preparedAttempt != null -> "等待上位机开始"
         connected -> "上位机已连接"

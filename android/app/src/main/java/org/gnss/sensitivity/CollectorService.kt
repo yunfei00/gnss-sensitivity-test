@@ -1,7 +1,6 @@
 package org.gnss.sensitivity
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -51,6 +50,8 @@ class CollectorService : Service() {
     @Volatile private var active: Attempt? = null
     private var latest = JSONObject()
     private var live = JSONObject()
+    private var manual: ManualSession? = null
+    private var manualId: String? = null
     private var localStop = false
     private var lastError: String? = null
     private val instanceId = UUID.randomUUID().toString()
@@ -81,7 +82,17 @@ class CollectorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "START_MANUAL") handler.post { startManual() }
+        if (intent?.action == "STOP_MANUAL") handler.post { stopManual(); refresh() }
+        if (intent?.action == "STOP_RUN_LOCAL") handler.post {
+            localStop = true
+            stopActive("USER_STOP")
+            prepared = null
+            run = null
+            refresh()
+        }
         if (intent?.action == "STOP") handler.post {
+            stopManual()
             localStop = true
             stopActive("USER_STOP")
             prepared = null
@@ -98,9 +109,10 @@ class CollectorService : Service() {
         runCatching { server?.close() }
         runCatching { client?.close() }
         handler.post {
+            stopManual("SERVICE_STOP")
             stopActive("SERVICE_STOP")
             journal.close()
-            uiSnapshot = uiSnapshot.copy(listening = false, connected = false, activeAttempt = null, preparedAttempt = null)
+            uiSnapshot = uiSnapshot.copy(listening = false, connected = false, activeAttempt = null, preparedAttempt = null, manualActive = false)
         }
         worker.quitSafely()
         super.onDestroy()
@@ -150,12 +162,48 @@ class CollectorService : Service() {
         }
     }
 
+    private fun startManual() {
+        if (manual != null) return
+        if (!ManualPolicy.canStart(ready(), active != null, prepared != null, run != null)) {
+            lastError = "MANUAL_NOT_READY_OR_RUN_CONFIGURED"
+            refresh()
+            return
+        }
+        lastError = null
+        val id = UUID.randomUUID().toString()
+        val session = ManualSession(location, handler, { refresh() }, { reason ->
+            lastError = reason
+            stopManual(reason)
+            refresh()
+        }, { kind, body -> journal.appendManual(id, kind, body) })
+        manual = session
+        manualId = id
+        try {
+            journal.appendManual(id, "SESSION_START", JSONObject().put("device_id", deviceId))
+            session.start()
+        } catch (error: Exception) {
+            stopManual("MANUAL_START_FAILED")
+            lastError = error.message ?: "MANUAL_START_FAILED"
+        }
+        refresh()
+    }
+
+    private fun stopManual(reason: String = "USER_STOP") {
+        manual?.stop()
+        manual = null
+        val id = manualId
+        manualId = null
+        if (id != null) runCatching {
+            journal.appendManual(id, "SESSION_STOP", JSONObject().put("reason", reason))
+        }.onFailure { lastError = "MANUAL_JOURNAL_ERROR: ${it.message}" }
+    }
+
     private fun ready(): Boolean =
         checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
             location.isProviderEnabled(LocationManager.GPS_PROVIDER)
 
     private fun status() = JSONObject()
-        .put("ready", ready()).put("active_run", run ?: JSONObject.NULL)
+        .put("ready", ready() && manual == null).put("active_run", run ?: JSONObject.NULL)
         .put("active_attempt", active?.id ?: JSONObject.NULL).put("local_stop", localStop)
         .put("model", "${Build.MANUFACTURER} ${Build.MODEL}").put("android_api", Build.VERSION.SDK_INT)
         .put("android_version", Build.VERSION.RELEASE).put("app_version", "0.1.0").put("root", rootEvidence)
@@ -163,6 +211,19 @@ class CollectorService : Service() {
         .put("last_error", lastError ?: JSONObject.NULL)
 
     private fun refresh() {
+        manual?.let { session ->
+            val fix = session.fix
+            uiSnapshot = CollectorDisplay(
+                listening = server?.isClosed == false && !closed,
+                connected = client?.isClosed == false && !closed,
+                manualActive = true, manualAccuracyM = fix?.takeIf { it.hasAccuracy() }?.accuracy?.toDouble(),
+                latitude = fix?.latitude, longitude = fix?.longitude, ttff = session.ttff,
+                usedInFix = session.satellites.filter { it.used }.distinctBy { it.constellation to it.svid }.size,
+                satellites = session.satellites, liveLatitude = fix?.latitude, liveLongitude = fix?.longitude,
+                liveFixCount = session.fixCount, lastError = lastError, recordCount = journal.manualCount()
+            )
+            return
+        }
         fun number(key: String) = latest.optDouble(key).takeIf { it.isFinite() }
         fun text(key: String) = latest.optString(key).takeIf { it.isNotBlank() && !latest.isNull(key) }
         val raw = live.optJSONArray("satellites") ?: latest.optJSONArray("satellites")
@@ -193,7 +254,7 @@ class CollectorService : Service() {
         when (kind) {
             "HELLO", "GET_STATUS", "PING" -> return status()
             "CONFIGURE_RUN" -> {
-                check(ready() && active == null) { "GPS disabled, precise location denied, or attempt active" }
+                check(ready() && active == null && manual == null) { "GPS disabled, precise location denied, or attempt active" }
                 if (run != target) {
                     started.clear()
                     latest = JSONObject()
@@ -207,6 +268,7 @@ class CollectorService : Service() {
             "STOP_RUN" -> if (run == target) {
                 stopActive("USER_STOP")
                 prepared = null
+                run = null
             }
             else -> {
                 check(run == target) { "Run must be configured on this service instance" }
@@ -314,14 +376,15 @@ class CollectorService : Service() {
             }
         }
 
-        @SuppressLint("MissingPermission")
+        private val collector = GnssCollector(location, handler, gnss, this)
+
         fun start() {
             check(ready())
             val duration = (window * 1_000_000_000).toLong()
-            check(location.registerGnssStatusCallback(gnss, handler))
-            t0 = SystemClock.elapsedRealtimeNanos()
-            selection = FirstFix(t0, duration)
-            location.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, this, handler.looper)
+            collector.start { startedAt ->
+                t0 = startedAt
+                selection = FirstFix(t0, duration)
+            }
             publish("DEVICE_STATUS", JSONObject().put("t0_monotonic_ns", t0), t0)
             handler.postDelayed(timeout, (window * 1000).toLong())
         }
@@ -371,8 +434,7 @@ class CollectorService : Service() {
         fun release() {
             handler.removeCallbacks(timeout)
             handler.removeCallbacks(settleFix)
-            runCatching { location.removeUpdates(this) }
-            runCatching { location.unregisterGnssStatusCallback(gnss) }
+            collector.stop()
         }
 
         fun complete(status: String, reason: String, satellite: SatelliteSnapshot? = null) {
