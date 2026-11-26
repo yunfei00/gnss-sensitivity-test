@@ -21,11 +21,12 @@ class FirstFix(private val startNs: Long, private val windowNs: Long) {
     // Satellite callbacks are asynchronous. A fast HOT fix may precede the first
     // satellite callback; use the earliest post-fix snapshot within tolerance.
     // Never attribute a snapshot from before this attempt to the new fix.
+    // Require at least one satellite used in the solution.
     fun associate(snapshots: Iterable<SatelliteSnapshot>, toleranceNs: Long): SatelliteSnapshot? {
         val atNs = fix?.atNs ?: return null
         return snapshots.filter {
             it.receivedNs >= atNs && it.receivedNs >= startNs &&
-                it.receivedNs - atNs <= toleranceNs
+                it.receivedNs - atNs <= toleranceNs && it.used.isNotEmpty()
         }.minByOrNull { it.receivedNs }
     }
 }

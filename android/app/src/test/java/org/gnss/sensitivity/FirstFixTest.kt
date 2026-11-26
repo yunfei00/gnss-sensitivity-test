@@ -32,11 +32,13 @@ class FirstFixTest {
         assertNull(selector.associate(listOf(SatelliteSnapshot(171, emptySet())), 20))
     }
 
-    @Test fun zeroUsedSatellitesCanBeReliableTelemetry() {
+    @Test fun zeroUsedSatellitesAreInvalidTelemetry() {
         val selector = FirstFix(100, 500)
         selector.accept(Fix(150, 0.0, 0.0), "gps", false, 152)
         val a = SatelliteSnapshot(140, emptySet())
         val b = SatelliteSnapshot(155, emptySet())
-        assertEquals(0, selector.associate(listOf(a, b), 20)?.count)
+        assertNull(selector.associate(listOf(a, b), 20))
+        val used = SatelliteSnapshot(160, setOf(1 to 2))
+        assertEquals(used, selector.associate(listOf(a, b, used), 20))
     }
 }
