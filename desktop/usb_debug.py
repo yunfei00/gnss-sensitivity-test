@@ -5,8 +5,8 @@ from threading import Event
 from time import monotonic
 from uuid import uuid4
 
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit, QLabel, QGridLayout, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView
+from PySide6.QtCore import QThread, Signal, QSettings
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit, QLabel, QGridLayout, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit
 
 from .adb import run_adb
 from .core import LinkError
@@ -45,10 +45,11 @@ class DebugWorker(QThread):
     telemetry = Signal(dict)
     phase = Signal(str)
 
-    def __init__(self, usb, adb, action, root):
+    def __init__(self, usb, adb, action, root, reference=None):
         super().__init__()
         self.usb, self.adb, self.action, self.root = usb, adb, action, root
         self.stop = Event()
+        self.reference = reference
 
     def run(self):
         transport = AdbTransport(self.usb, self.adb)
@@ -97,7 +98,7 @@ class DebugWorker(QThread):
                     "preparation_evidence": "USB diagnostic only; startup state not verified"})
                 if self.stop.is_set():
                     return
-                command("START_ATTEMPT", attempt, {"reference": {"latitude": 0, "longitude": 0},
+                command("START_ATTEMPT", attempt, {"reference": self.reference,
                     "observation_s": 60, "satellite_tolerance_ms": 1500})
                 self.phase.emit("正在定位采集")
                 cursor = 0
@@ -112,8 +113,8 @@ class DebugWorker(QThread):
                         if event["run_id"] != run or event["attempt_id"] != attempt or event["seq"] <= cursor:
                             raise LinkError("事件身份或序列错误")
                         cursor = event["seq"]
-                        # No known reference: never expose the dummy-reference error as a measurement.
-                        event["payload"].pop("horizontal_error_m", None)
+                        if self.reference is None:
+                            event["payload"].pop("horizontal_error_m", None)
                         line = json.dumps(event, ensure_ascii=False)
                         out.write(line + "\n")
                         self.telemetry.emit(event)
@@ -155,6 +156,15 @@ class UsbDebugPage(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("真实 USB 手机独立调试（无需仪器，不产生灵敏度结果）"))
         layout.addWidget(QLabel("选择顶部 USB 设备；手机授权精确定位并手动启动 USB 采集服务。"))
+        self.settings = QSettings("GNSS", "SensitivityTest")
+        reference_row = QHBoxLayout()
+        self.ref_lat = QLineEdit(str(self.settings.value("usb_debug/reference_lat", "")))
+        self.ref_lon = QLineEdit(str(self.settings.value("usb_debug/reference_lon", "")))
+        for caption, field in (("参考纬度 (WGS84)", self.ref_lat), ("参考经度 (WGS84)", self.ref_lon)):
+            reference_row.addWidget(QLabel(caption))
+            field.setPlaceholderText("可留空")
+            reference_row.addWidget(field)
+        layout.addLayout(reference_row)
         row = QHBoxLayout()
         self.actions = []
         for title, action in (("打开 APP", "launch"), ("Root 检测", "root"),
@@ -175,7 +185,7 @@ class UsbDebugPage(QWidget):
                          ("root", "APP Root"), ("last_error", "手机最近异常"))),
             ("实时定位", (("ttff_s", "TTFF (s)"), ("used_in_fix", "解算卫星"),
                          ("latitude", "纬度"), ("longitude", "经度"),
-                         ("satellite_count", "可见信号数"), ("result", "采集结果"))),
+                         ("satellite_count", "可见信号数"), ("horizontal_error_m", "定位误差 (m)"), ("result", "采集结果"))),
         ):
             group = QGroupBox(title)
             grid = QGridLayout(group)
@@ -213,11 +223,11 @@ class UsbDebugPage(QWidget):
         kind = event["type"]
         if kind == "LOCATION_UPDATE" and data.get("mock_location"):
             return
-        for key in ("latitude", "longitude", "ttff_s", "used_in_fix"):
+        for key in ("latitude", "longitude", "ttff_s", "used_in_fix", "horizontal_error_m"):
             if key in data:
                 value = data[key]
-                if key in ("latitude", "longitude", "ttff_s") and isinstance(value, (int, float)):
-                    value = f"{value:.3f}" if key == "ttff_s" else f"{value:.6f}"
+                if key in ("latitude", "longitude", "ttff_s", "horizontal_error_m") and isinstance(value, (int, float)):
+                    value = f"{value:.3f}" if key in ("ttff_s", "horizontal_error_m") else f"{value:.6f}"
                 self.set_value(key, value)
         if kind == "SATELLITE_STATUS":
             satellites = data.get("satellites", [])
@@ -253,7 +263,20 @@ class UsbDebugPage(QWidget):
             return
         if getattr(self.window, "gss_page", None) and self.window.gss_page.worker is not None:
             return
+        reference = None
         try:
+            if action == "collect":
+                a, b = self.ref_lat.text().strip(), self.ref_lon.text().strip()
+                if a or b:
+                    try:
+                        lat, lon = float(a), float(b)
+                    except ValueError:
+                        raise LinkError("请输入完整有效的参考经纬度，或两项均留空")
+                    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                        raise LinkError("参考经纬度超出范围")
+                    reference = {"latitude": lat, "longitude": lon}
+                self.settings.setValue("usb_debug/reference_lat", a)
+                self.settings.setValue("usb_debug/reference_lon", b)
             device = self.window.serial.currentData()
             if device is None:
                 raise LinkError("请选择 USB 手机")
@@ -262,10 +285,10 @@ class UsbDebugPage(QWidget):
             self.output.appendPlainText(str(exc))
             return
         if action == "collect":
-            for field in ("ttff_s", "used_in_fix", "latitude", "longitude", "satellite_count", "result"):
+            for field in ("ttff_s", "used_in_fix", "latitude", "longitude", "satellite_count", "horizontal_error_m", "result"):
                 self.set_value(field, None)
             self.satellites.setRowCount(0)
-        self.worker = DebugWorker(usb, self.window.adb, action, self.window.root / "usb-debug")
+        self.worker = DebugWorker(usb, self.window.adb, action, self.window.root / "usb-debug", reference)
         self.worker.log.connect(self.output.appendPlainText)
         self.worker.status.connect(self.show_status)
         self.worker.telemetry.connect(self.show_event)

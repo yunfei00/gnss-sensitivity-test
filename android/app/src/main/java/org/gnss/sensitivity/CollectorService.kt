@@ -286,10 +286,10 @@ class CollectorService : Service() {
                     }
                     "START_ATTEMPT" -> {
                         check(ready() && !localStop && active == null && id == prepared && id !in started)
-                        val reference = args.getJSONObject("reference")
-                        val lat = reference.getDouble("latitude")
-                        val lon = reference.getDouble("longitude")
-                        require(lat in -90.0..90.0 && lon in -180.0..180.0)
+                        val reference = if (args.isNull("reference")) null else args.getJSONObject("reference")
+                        val lat = reference?.getDouble("latitude")
+                        val lon = reference?.getDouble("longitude")
+                        require(reference == null || (lat != null && lon != null && lat in -90.0..90.0 && lon in -180.0..180.0))
                         val window = args.getDouble("observation_s")
                         require(window in 20.3..300.0)
                         val tolerance = args.getLong("satellite_tolerance_ms")
@@ -329,7 +329,7 @@ class CollectorService : Service() {
     }
 
     private inner class Attempt(
-        val runId: String, val id: String, val lat: Double, val lon: Double,
+        val runId: String, val id: String, val lat: Double?, val lon: Double?,
         val window: Double, val toleranceMs: Long
     ) : LocationListener {
         private var t0 = 0L
@@ -407,7 +407,7 @@ class CollectorService : Service() {
                 lastFixAtNs = fix.atNs
                 fixCount++
                 live = JSONObject().put("latitude", fix.latitude).put("longitude", fix.longitude)
-                    .put("horizontal_error_m", Geodesic.WGS84.Inverse(lat, lon, fix.latitude, fix.longitude).s12)
+                    .also { if (lat != null && lon != null) it.put("horizontal_error_m", Geodesic.WGS84.Inverse(lat, lon, fix.latitude, fix.longitude).s12) }
                     .put("age_ms", (now - fix.atNs) / 1_000_000)
                     .put("fix_count", fixCount)
             }
@@ -417,6 +417,8 @@ class CollectorService : Service() {
             if (fix.latitude.isFinite() && fix.longitude.isFinite()) {
                 payload.put("latitude", fix.latitude).put("longitude", fix.longitude)
                 .put("fresh", fresh).put("fix_count", fixCount)
+                if (fresh && lat != null && lon != null) payload.put("horizontal_error_m",
+                    Geodesic.WGS84.Inverse(lat, lon, fix.latitude, fix.longitude).s12)
             }
             publish("LOCATION_UPDATE", payload, now)
         }
@@ -432,7 +434,7 @@ class CollectorService : Service() {
             .put("latitude", fix.latitude).put("longitude", fix.longitude)
             .put("first_fix_elapsed_realtime_ns", fix.atNs)
             .put("ttff_s", (fix.atNs - t0) / 1e9)
-            .put("horizontal_error_m", Geodesic.WGS84.Inverse(lat, lon, fix.latitude, fix.longitude).s12)
+            .also { if (lat != null && lon != null) it.put("horizontal_error_m", Geodesic.WGS84.Inverse(lat, lon, fix.latitude, fix.longitude).s12) }
 
         fun release() {
             handler.removeCallbacks(timeout)
