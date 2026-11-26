@@ -270,10 +270,14 @@ class MainActivity : Activity() {
         })
         satellites.show(if (display.satellites.isEmpty()) "等待卫星遥测" else {
             val strongest = display.satellites.sortedByDescending { it.cn0 }
-            "${display.satellites.size} 个信号 · 参与解算 ${strongest.filter { it.used }.distinctBy { it.constellation to it.svid }.size} 颗\n" +
+            val unique = strongest.groupBy { it.constellation to it.svid }.values
+            fun flag(value: Boolean?) = when (value) { true -> "有"; false -> "无"; null -> "未知" }
+            "可见 ${unique.size} 颗 · 参与解算 ${unique.count { group -> group.any { it.used } }} 颗\n" +
+                "有星历 ${unique.count { group -> group.any { it.ephemeris == true } }} 颗 · 有历书 ${unique.count { group -> group.any { it.almanac == true } }} 颗\n" +
                 strongest.joinToString("\n") {
                     "${constellation(it.constellation)} ${it.svid}    ${format(it.cn0, 1, " dB-Hz")}" +
-                        if (it.used) "    参与解算" else ""
+                        "    星历:${flag(it.ephemeris)} 历书:${flag(it.almanac)}" +
+                        (if (it.used) "    已解算" else "    未解算")
                 }
         })
         systemChecks.show("${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n" +

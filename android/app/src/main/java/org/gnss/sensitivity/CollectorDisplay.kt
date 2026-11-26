@@ -1,6 +1,7 @@
 package org.gnss.sensitivity
 
-data class DisplaySatellite(val constellation: Int, val svid: Int, val cn0: Double, val used: Boolean)
+data class DisplaySatellite(val constellation: Int, val svid: Int, val cn0: Double, val used: Boolean,
+    val ephemeris: Boolean? = null, val almanac: Boolean? = null)
 
 data class CollectorDisplay(
     val listening: Boolean = false,

@@ -230,7 +230,9 @@ class CollectorService : Service() {
         val satellites = List(raw?.length() ?: 0) { index ->
             val item = checkNotNull(raw).getJSONObject(index)
             DisplaySatellite(item.getInt("constellation"), item.getInt("svid"),
-                item.getDouble("cn0_db_hz"), item.getBoolean("used_in_fix"))
+                item.getDouble("cn0_db_hz"), item.getBoolean("used_in_fix"),
+                if (item.has("has_ephemeris")) item.getBoolean("has_ephemeris") else null,
+                if (item.has("has_almanac")) item.getBoolean("has_almanac") else null)
         }
         uiSnapshot = CollectorDisplay(
             listening = server?.isClosed == false && !closed, connected = client?.isClosed == false && !closed,

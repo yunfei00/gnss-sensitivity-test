@@ -30,11 +30,13 @@ internal class ManualSession(
             if (!running) return
             satellites = List(status.satelliteCount) { i ->
                 DisplaySatellite(status.getConstellationType(i), status.getSvid(i),
-                    status.getCn0DbHz(i).toDouble(), status.usedInFix(i))
+                    status.getCn0DbHz(i).toDouble(), status.usedInFix(i),
+                    status.hasEphemerisData(i), status.hasAlmanacData(i))
             }
             persist("SATELLITE_STATUS", org.json.JSONObject().put("satellites", org.json.JSONArray().apply {
                 satellites.forEach { sat -> put(org.json.JSONObject().put("constellation", sat.constellation)
-                    .put("svid", sat.svid).put("cn0_db_hz", sat.cn0).put("used_in_fix", sat.used)) }
+                    .put("svid", sat.svid).put("cn0_db_hz", sat.cn0).put("used_in_fix", sat.used).put("has_ephemeris", sat.ephemeris)
+                    .put("has_almanac", sat.almanac)) }
             }))
             persist("GNSS_DIAGNOSTIC", org.json.JSONObject().put("kind", "ephemeris").put("satellites", org.json.JSONArray().apply {
                 for (i in 0 until status.satelliteCount) put(org.json.JSONObject().put("svid", status.getSvid(i))
