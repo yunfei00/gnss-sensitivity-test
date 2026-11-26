@@ -327,25 +327,16 @@ class CollectorService : Service() {
         val window: Double, val toleranceMs: Long
     ) : LocationListener {
         private var t0 = 0L
-        private lateinit var selection: FirstFix
+        private lateinit var selection: SatelliteConfirmedFix
         private var receiverStarted = false
         private var fixCount = 0L
         private var lastFixAtNs = 0L
-        private val snapshots = ArrayDeque<SatelliteSnapshot>()
         private val timeout = Runnable {
             guard {
                 if (selection.fix == null) {
                     if (ready() && receiverStarted) complete("FAIL", "TIMEOUT")
                     else complete("INVALID", "GNSS_NOT_READY")
                 }
-            }
-        }
-        private val settleFix = Runnable {
-            guard {
-                val satellite = selection.associate(snapshots, toleranceMs * 1_000_000)
-                if (!ready() || !receiverStarted || satellite == null) {
-                    complete("INVALID", "INVALID_TELEMETRY")
-                } else complete("OBSERVED", "FIRST_FIX", satellite)
             }
         }
         private val gnss = object : GnssStatus.Callback() {
@@ -367,12 +358,14 @@ class CollectorService : Service() {
                     satellites.put(JSONObject().put("constellation", constellation).put("svid", svid)
                         .put("used_in_fix", inFix).put("cn0_db_hz", status.getCn0DbHz(i).toDouble()))
                 }
-                snapshots.addLast(SatelliteSnapshot(now, used))
-                while (snapshots.isNotEmpty() && snapshots.first().receivedNs < now - toleranceMs * 2_000_000) {
-                    snapshots.removeFirst()
-                }
                 publish("SATELLITE_STATUS", JSONObject().put("used_in_fix", used.size)
                     .put("timestamp_basis", "callback_received").put("satellites", satellites), now)
+                val snapshot = SatelliteSnapshot(now, used)
+                val confirmed = selection.confirm(snapshot)
+                if (confirmed != null) {
+                    publish("FIRST_FIX", metrics(confirmed), confirmed.atNs)
+                    complete("OBSERVED", "FIRST_FIX", snapshot)
+                }
             }
         }
 
@@ -383,7 +376,7 @@ class CollectorService : Service() {
             val duration = (window * 1_000_000_000).toLong()
             collector.start { startedAt ->
                 t0 = startedAt
-                selection = FirstFix(t0, duration)
+                selection = SatelliteConfirmedFix(t0, duration, toleranceMs * 1_000_000)
             }
             publish("DEVICE_STATUS", JSONObject().put("t0_monotonic_ns", t0), t0)
             handler.postDelayed(timeout, (window * 1000).toLong())
@@ -404,18 +397,14 @@ class CollectorService : Service() {
                     .put("age_ms", (now - fix.atNs) / 1_000_000)
                     .put("fix_count", fixCount)
             }
-            val first = selection.accept(fix, value.provider, mock, now)
+            selection.offer(fix, value.provider, mock, now)
             val payload = JSONObject().put("provider", value.provider).put("mock_location", mock)
-                .put("location_elapsed_ns", fix.atNs).put("locked_first_fix", first)
+                .put("location_elapsed_ns", fix.atNs).put("locked_first_fix", false)
             if (fix.latitude.isFinite() && fix.longitude.isFinite()) {
                 payload.put("latitude", fix.latitude).put("longitude", fix.longitude)
                 .put("fresh", fresh).put("fix_count", fixCount)
             }
             publish("LOCATION_UPDATE", payload, now)
-            if (first) {
-                publish("FIRST_FIX", metrics(fix), fix.atNs)
-                handler.postDelayed(settleFix, toleranceMs)
-            }
         }
 
         override fun onProviderDisabled(provider: String) = guard { complete("INVALID", "GPS_DISABLED") }
@@ -433,7 +422,6 @@ class CollectorService : Service() {
 
         fun release() {
             handler.removeCallbacks(timeout)
-            handler.removeCallbacks(settleFix)
             collector.stop()
         }
 

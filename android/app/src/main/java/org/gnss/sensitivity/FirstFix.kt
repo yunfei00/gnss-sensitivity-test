@@ -30,3 +30,26 @@ class FirstFix(private val startNs: Long, private val windowNs: Long) {
         }.minByOrNull { it.receivedNs }
     }
 }
+
+/** A location is provisional until a subsequent satellite callback confirms use. */
+internal class SatelliteConfirmedFix(private val startNs: Long, private val windowNs: Long,
+                                     private val toleranceNs: Long) {
+    private var pending: Fix? = null
+    var fix: Fix? = null
+        private set
+
+    fun offer(candidate: Fix, provider: String?, mock: Boolean, now: Long) {
+        if (fix != null || (pending?.atNs ?: startNs) >= candidate.atNs) return
+        val validator = FirstFix(startNs, windowNs)
+        if (validator.accept(candidate, provider, mock, now)) pending = candidate
+    }
+
+    fun confirm(snapshot: SatelliteSnapshot): Fix? {
+        val candidate = pending ?: return null
+        if (fix != null || snapshot.receivedNs < candidate.atNs) return null
+        pending = null
+        if (snapshot.used.isEmpty() || snapshot.receivedNs - candidate.atNs > toleranceNs) return null
+        fix = candidate
+        return candidate
+    }
+}
